@@ -1,0 +1,15 @@
+# Global owners
+* @zzszmyf
+
+# Scanner
+/internal/scanner/ @zzszmyf
+
+# Index & Query
+/internal/index/ @zzszmyf
+
+# Parser
+/internal/parser/ @zzszmyf
+
+# VFS & FUSE
+/internal/vfs/ @zzszmyf
+/internal/fusefs/ @zzszmyf

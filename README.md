@@ -1,5 +1,11 @@
 # CodeFuse
 
+[![CI](https://github.com/zzszmyf/codefuse/actions/workflows/ci.yml/badge.svg)](https://github.com/zzszmyf/codefuse/actions)
+[![Go Report Card](https://goreportcard.com/badge/github.com/zzszmyf/codefuse)](https://goreportcard.com/report/github.com/zzszmyf/codefuse)
+[![codecov](https://codecov.io/gh/zzszmyf/codefuse/branch/main/graph/badge.svg)](https://codecov.io/gh/zzszmyf/codefuse)
+[![Release](https://img.shields.io/github/release/zzszmyf/codefuse.svg)](https://github.com/zzszmyf/codefuse/releases)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 CodeFuse is a **Code Virtual File System** for AI Agents. It indexes your codebase and exposes it as queryable views — symbols, file outlines, and a FUSE-mounted filesystem — so AI Agents can explore code using familiar operations (`ls`, `cat`, `find`, `glob`) instead of brittle text grepping.
 
 ## Why
@@ -245,4 +251,4 @@ codefuse/
 
 ## License
 
-MIT
+[Apache-2.0](LICENSE)

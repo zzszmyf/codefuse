@@ -1,0 +1,11 @@
+CodeFuse
+Copyright 2025 CodeFuse Authors
+
+This product includes software developed at
+https://github.com/zzszmyf/codefuse
+
+This project uses the following open source components:
+
+  - Cobra (https://github.com/spf13/cobra) — Apache-2.0
+  - go-fuse (https://github.com/hanwen/go-fuse) — BSD-3-Clause
+  - testify (https://github.com/stretchr/testify) — MIT
