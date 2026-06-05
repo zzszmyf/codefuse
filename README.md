@@ -225,6 +225,10 @@ umount /tmp/mymount
 
 Go uses the official `go/ast` parser (zero deps, 100% accurate). Other languages use tree-sitter CLI when `--treesitter` is passed, falling back to regex otherwise.
 
+## Technical Roadmap
+
+See [`ROADMAP_TECH.md`](ROADMAP_TECH.md) for versioned engineering milestones (v0.2 → v1.0).
+
 ## Architecture
 
 ```
