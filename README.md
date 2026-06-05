@@ -266,6 +266,49 @@ cat /tmp/mymount/references/Authenticate  # callers & callees
 umount /tmp/mymount
 ```
 
+## Benchmark: CodeFuse vs `grep` on vLLM
+
+We benchmarked CodeFuse against native `grep` on [`vllm`](https://github.com/vllm-project/vllm) — a large Python project with ~2,400 files and ~27,000 symbols.
+
+**Test machine:** Apple Silicon Mac (macOS), CodeFuse index already built.
+
+### Index cost (one-time)
+
+| Metric | Value |
+|--------|-------|
+| Files indexed | 2,426 |
+| Symbols indexed | 26,863 |
+| Index time | `39.1s` |
+| Index disk size | `8.0 MB` |
+
+### Query performance (warm, averaged over 3 runs)
+
+| Query | `grep` (native) | `codefuse query` | Speedup |
+|-------|-----------------|------------------|---------|
+| exact class `LLM` | `2.17s` | `0.028s` | **~76×** |
+| exact method `execute_model` | `3.28s` | `0.012s` | **~285×** |
+| fuzzy `*sampler*` | `6.43s` | `0.012s` | **~550×** |
+| prefix `schedule*` | `2.99s` | `0.009s` | **~325×** |
+| broad `*engine*` | `6.41s` | `0.013s` | **~490×** |
+
+### Result quality
+
+`grep` is a **text search**; CodeFuse is a **symbol search**. The difference matters:
+
+| Query | `grep` matches | CodeFuse symbol matches |
+|-------|----------------|-------------------------|
+| `^class LLM` | 2 | 1 |
+| `def execute_model` | 16 | 12 |
+| `sampler` (any text) | 881 | 49 symbol definitions |
+| `engine` (any text) | 6,691 | 144 symbol definitions |
+
+CodeFuse returns symbol definitions only — no noise from comments, strings, or variable usages. For AI agents exploring code, this means fewer irrelevant hits and less token burn.
+
+### When to use which
+
+- **One-off lookup** (1–2 queries): `grep` wins because it needs no index.
+- **Repeated exploration** (10+ queries, caller/callee tracing, refactoring): CodeFuse wins after amortizing the one-time ~39s index cost, and provides structured results `grep` cannot produce.
+
 ## Supported Languages
 
 | Language | Parser | Symbols | Call Graph |
