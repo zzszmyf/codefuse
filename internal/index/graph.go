@@ -164,8 +164,12 @@ func extractEdges(file types.FileEntry, pkgNames map[string]string, graph *types
 		}
 		pkgName := pkgNames[file.Path]
 		return parser.ExtractGoCallGraph(file.Path, content, pkgName, pkgNames, graph)
+	default:
+		// Try tree-sitter for call graph extraction on non-Go languages.
+		if parser.TreeSitterAvailable() {
+			return parser.ExtractTreeSitterCallGraph(file.AbsPath, file.Path, file.Language, graph)
+		}
 	}
-	// TODO: tree-sitter and regex-based call graph for other languages.
 	return nil, nil
 }
 
