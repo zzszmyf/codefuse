@@ -239,6 +239,24 @@ codefuse/
 └── pkg/types/             # Shared types
 ```
 
+## FAQ
+
+### How is CodeFuse different from CodeGraph?
+
+| | **CodeGraph** | **CodeFuse** |
+|--|---------------|--------------|
+| **Core output** | Code dependency graph (visualization) | Virtual filesystem (queryable symbol views) |
+| **Problem solved** | "Who does this class call? Any circular deps?" | "How does an Agent quickly find `useAuth`?" |
+| **Interaction** | Generate static graph, human reads it | `ls` / `cat` / `codefuse query "use*"` |
+| **Primary user** | Human developers (refactoring, onboarding) | AI Agents + CLI users |
+| **Tech core** | Graph data model (class→method→call edges) | Symbol index + VFS/FUSE mount |
+| **Update model** | One-shot analysis | Incremental index, live mount |
+
+**CodeGraph** draws a "code map" for you to understand architecture.  
+**CodeFuse** turns code into a "searchable filesystem" for Agents.
+
+They complement each other — CodeFuse for fast symbol lookup, CodeGraph for architectural understanding.
+
 ## Roadmap
 
 - [x] Tree-sitter CLI batch parsing (`--treesitter`)
