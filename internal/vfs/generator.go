@@ -4,26 +4,28 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/yifanmeng/codefuse/internal/index"
+	"github.com/yifanmeng/codefuse/pkg/types"
 )
 
-// Generator creates virtual filesystem views from an index
+// Generator creates virtual filesystem views from a graph index.
 type Generator struct {
-	idx     *index.Index
-	vfsRoot string
+	graph     *index.Graph
+	vfsRoot   string
 }
 
-// NewGenerator creates a VFS generator
-func NewGenerator(idx *index.Index, projectPath string) *Generator {
+// NewGenerator creates a VFS generator.
+func NewGenerator(graph *index.Graph, projectPath string) *Generator {
 	return &Generator{
-		idx:     idx,
+		graph:   graph,
 		vfsRoot: filepath.Join(projectPath, ".codefuse", "vfs"),
 	}
 }
 
-// GenerateAll creates all VFS views
+// GenerateAll creates all VFS views.
 func (g *Generator) GenerateAll() error {
 	if err := os.RemoveAll(g.vfsRoot); err != nil {
 		return err
@@ -51,27 +53,27 @@ func (g *Generator) generateSymbolViews() error {
 		return err
 	}
 
-	// Group symbols by name
-	byName := make(map[string][]index.SymbolDisplay)
-	for _, sym := range g.idx.Symbols {
-		byName[sym.Name] = append(byName[sym.Name], index.SymbolDisplay{
-			Name: sym.Name,
-			File: sym.File,
-			Line: sym.Line,
-			Kind: sym.Kind,
-		})
+	// Group nodes by name
+	byName := make(map[string][]types.Node)
+	for _, node := range g.graph.Nodes {
+		byName[node.Name] = append(byName[node.Name], node)
 	}
 
-	for name, syms := range byName {
-		// Sanitize filename
+	for name, nodes := range byName {
 		filename := sanitizeFilename(name)
 		path := filepath.Join(symbolDir, filename)
 
 		var content strings.Builder
 		content.WriteString(fmt.Sprintf("# Symbol: %s\n\n", name))
-		for _, sym := range syms {
-			content.WriteString(fmt.Sprintf("## %s (%s)\n", sym.Name, sym.Kind))
-			content.WriteString(fmt.Sprintf("- File: %s:%d\n", sym.File, sym.Line))
+		for _, node := range nodes {
+			content.WriteString(fmt.Sprintf("## %s (%s)\n", node.Name, node.Kind))
+			content.WriteString(fmt.Sprintf("- File: %s:%d\n", node.File, node.Line))
+			if node.Parent != "" {
+				content.WriteString(fmt.Sprintf("- Parent: %s\n", node.Parent))
+			}
+			if node.Signature != "" {
+				content.WriteString(fmt.Sprintf("- Signature: %s\n", node.Signature))
+			}
 			content.WriteString("\n")
 		}
 
@@ -89,34 +91,25 @@ func (g *Generator) generateOutlineViews() error {
 		return err
 	}
 
-	// Group symbols by file
-	byFile := make(map[string][]index.SymbolDisplay)
-	for _, sym := range g.idx.Symbols {
-		byFile[sym.File] = append(byFile[sym.File], index.SymbolDisplay{
-			Name: sym.Name,
-			File: sym.File,
-			Line: sym.Line,
-			Kind: sym.Kind,
-		})
+	// Group nodes by file
+	byFile := make(map[string][]types.Node)
+	for _, node := range g.graph.Nodes {
+		byFile[node.File] = append(byFile[node.File], node)
 	}
 
-	for file, syms := range byFile {
-		// Sort by line number (bubble sort for simplicity)
-		for i := 0; i < len(syms); i++ {
-			for j := i + 1; j < len(syms); j++ {
-				if syms[j].Line < syms[i].Line {
-					syms[i], syms[j] = syms[j], syms[i]
-				}
-			}
-		}
+	for file, nodes := range byFile {
+		// Sort by line number
+		sort.Slice(nodes, func(i, j int) bool {
+			return nodes[i].Line < nodes[j].Line
+		})
 
 		filename := sanitizeFilename(file)
 		path := filepath.Join(outlineDir, filename)
 
 		var content strings.Builder
 		content.WriteString(fmt.Sprintf("# Outline: %s\n\n", file))
-		for _, sym := range syms {
-			content.WriteString(fmt.Sprintf("L%03d\t%s\t%s\n", sym.Line, sym.Kind, sym.Name))
+		for _, node := range nodes {
+			content.WriteString(fmt.Sprintf("L%03d\t%s\t%s\n", node.Line, node.Kind, node.Name))
 		}
 
 		if err := os.WriteFile(path, []byte(content.String()), 0644); err != nil {
@@ -133,28 +126,81 @@ func (g *Generator) generateReferenceViews() error {
 		return err
 	}
 
-	// For now, create a simple call graph summary
-	// TODO: implement actual reference analysis with tree-sitter
-	var content strings.Builder
-	content.WriteString("# References\n\n")
-	content.WriteString("Reference analysis requires tree-sitter parsing.\n")
-	content.WriteString(fmt.Sprintf("Total symbols indexed: %d\n", len(g.idx.Symbols)))
+	// Ensure indexes are built.
+	g.graph.BuildIndexes()
 
-	return os.WriteFile(filepath.Join(refDir, "README.md"), []byte(content.String()), 0644)
+	// Generate a reference file for each unique symbol name.
+	byName := make(map[string][]types.Node)
+	for _, node := range g.graph.Nodes {
+		byName[node.Name] = append(byName[node.Name], node)
+	}
+
+	for name, nodes := range byName {
+		filename := sanitizeFilename(name)
+		path := filepath.Join(refDir, filename)
+
+		var content strings.Builder
+		content.WriteString(fmt.Sprintf("# References: %s\n\n", name))
+
+		for _, node := range nodes {
+			content.WriteString(fmt.Sprintf("## %s (%s) @ %s:%d\n\n",
+				node.Name, node.Kind, node.File, node.Line))
+
+			// Callers (who calls this node)
+			callers := g.graph.FindCallers(node.ID)
+			if len(callers) > 0 {
+				content.WriteString("### Callers\n\n")
+				for _, edge := range callers {
+					caller := g.graph.FindNodeByID(edge.From)
+					if caller != nil {
+						content.WriteString(fmt.Sprintf("- `%s` (%s) @ %s:%d\n",
+							caller.Name, caller.Kind, edge.File, edge.Line))
+					} else {
+						content.WriteString(fmt.Sprintf("- `%s` @ %s:%d\n",
+							edge.From, edge.File, edge.Line))
+					}
+				}
+				content.WriteString("\n")
+			} else {
+				content.WriteString("### Callers\n\nNo callers found.\n\n")
+			}
+
+			// Callees (who this node calls)
+			callees := g.graph.FindCallees(node.ID)
+			if len(callees) > 0 {
+				content.WriteString("### Callees\n\n")
+				for _, edge := range callees {
+					callee := g.graph.FindNodeByID(edge.To)
+					if callee != nil {
+						content.WriteString(fmt.Sprintf("- `%s` (%s) @ %s:%d\n",
+							callee.Name, callee.Kind, edge.File, edge.Line))
+					} else {
+						content.WriteString(fmt.Sprintf("- `%s` @ %s:%d\n",
+							edge.To, edge.File, edge.Line))
+					}
+				}
+				content.WriteString("\n")
+			} else {
+				content.WriteString("### Callees\n\nNo callees found.\n\n")
+			}
+		}
+
+		if err := os.WriteFile(path, []byte(content.String()), 0644); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func sanitizeFilename(name string) string {
-	// Replace path separators and other problematic characters
-	replacer := strings.NewReplacer(
-		"/", "_",
-		"\\", "_",
-		":", "_",
-		"*", "_",
-		"?", "_",
-		"\"", "_",
-		"<", "_",
-		">", "_",
-		"|", "_",
-	)
-	return replacer.Replace(name)
+	replacer := []struct{ old, new string }{
+		{"/", "_"}, {"\\", "_"}, {":", "_"},
+		{"*", "_"}, {"?", "_"}, {"\"", "_"},
+		{"<", "_"}, {">", "_"}, {"|", "_"},
+	}
+	for _, r := range replacer {
+		name = strings.ReplaceAll(name, r.old, r.new)
+	}
+	return name
 }

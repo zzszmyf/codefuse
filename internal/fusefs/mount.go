@@ -13,7 +13,7 @@ import (
 
 // Mount mounts the codefuse VFS at the given mountpoint.
 // Blocks until unmounted.
-func Mount(idx *index.Index, mountpoint string) error {
+func Mount(graph *index.Graph, mountpoint string) error {
 	if err := os.MkdirAll(mountpoint, 0755); err != nil {
 		return fmt.Errorf("cannot create mountpoint: %w", err)
 	}
@@ -30,7 +30,7 @@ func Mount(idx *index.Index, mountpoint string) error {
 		GID: uint32(os.Getgid()),
 	}
 
-	server, err := fs.Mount(mountpoint, NewVFSRoot(idx), opts)
+	server, err := fs.Mount(mountpoint, NewVFSRoot(graph), opts)
 	if err != nil {
 		return fmt.Errorf("fuse mount failed: %w", err)
 	}
