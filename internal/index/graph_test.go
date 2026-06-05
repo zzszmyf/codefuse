@@ -261,3 +261,87 @@ func formatEdges(edges []types.Edge) []string {
 	}
 	return out
 }
+
+// TestBuildGraph_PythonKindClassification verifies that module-level defs after
+// a class are classified as KindFunction, not KindMethod.
+func TestBuildGraph_PythonKindClassification(t *testing.T) {
+	fileA := `class MyClass:
+    def method_a(self):
+        pass
+
+# After class ends, this should be a function
+def top_level():
+    pass
+`
+
+	tmpDir := t.TempDir()
+	aPath := filepath.Join(tmpDir, "a.py")
+	require.NoError(t, os.WriteFile(aPath, []byte(fileA), 0644))
+
+	files := []types.FileEntry{
+		{Path: "a.py", AbsPath: aPath, Language: types.LangPython},
+	}
+
+	graph, err := BuildGraph(tmpDir, files, false)
+	require.NoError(t, err)
+
+	// method_a should be KindMethod inside MyClass
+	methodA := graph.FindNodeByName("method_a", "")
+	require.Len(t, methodA, 1)
+	assert.Equal(t, types.KindMethod, methodA[0].Kind)
+	assert.Equal(t, "MyClass", methodA[0].Parent)
+
+	// top_level should be KindFunction, NOT KindMethod
+	topLevel := graph.FindNodeByName("top_level", "")
+	require.Len(t, topLevel, 1)
+	assert.Equal(t, types.KindFunction, topLevel[0].Kind)
+	assert.Empty(t, topLevel[0].Parent)
+}
+
+// TestBuildGraph_PythonCallGraph verifies that Python regex-based call graph
+// extraction produces edges for same-file calls.
+func TestBuildGraph_PythonCallGraph(t *testing.T) {
+	fileA := `def foo():
+    bar()
+    baz()
+
+def bar():
+    pass
+
+def baz():
+    foo()
+`
+
+	tmpDir := t.TempDir()
+	aPath := filepath.Join(tmpDir, "a.py")
+	require.NoError(t, os.WriteFile(aPath, []byte(fileA), 0644))
+
+	files := []types.FileEntry{
+		{Path: "a.py", AbsPath: aPath, Language: types.LangPython},
+	}
+
+	graph, err := BuildGraph(tmpDir, files, false)
+	require.NoError(t, err)
+
+	// Should have 3 nodes and at least 3 edges (foo->bar, foo->baz, baz->foo)
+	assert.GreaterOrEqual(t, len(graph.Nodes), 3, "expected at least 3 nodes")
+	assert.GreaterOrEqual(t, len(graph.Edges), 3, "expected at least 3 call edges")
+
+	// Verify specific edges exist
+	fooID := graph.FindNodeByName("foo", "")[0].ID
+	barID := graph.FindNodeByName("bar", "")[0].ID
+	bazID := graph.FindNodeByName("baz", "")[0].ID
+
+	assert.True(t, hasEdge(graph.Edges, fooID, barID), "expected foo -> bar")
+	assert.True(t, hasEdge(graph.Edges, fooID, bazID), "expected foo -> baz")
+	assert.True(t, hasEdge(graph.Edges, bazID, fooID), "expected baz -> foo")
+}
+
+func hasEdge(edges []types.Edge, fromID, toID string) bool {
+	for _, e := range edges {
+		if e.From == fromID && e.To == toID {
+			return true
+		}
+	}
+	return false
+}

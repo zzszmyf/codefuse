@@ -1,16 +1,34 @@
 package index
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/yifanmeng/codefuse/internal/parser"
 	"github.com/yifanmeng/codefuse/pkg/types"
 )
+
+// Python call-graph patterns and keyword filter.
+var (
+	pyCallPat = regexp.MustCompile(`\b([a-zA-Z_]\w*)\s*\(`)
+)
+
+var pythonKeywords = map[string]bool{
+	"if": true, "for": true, "while": true, "def": true, "class": true,
+	"with": true, "except": true, "raise": true, "assert": true,
+	"return": true, "yield": true, "lambda": true, "pass": true,
+	"del": true, "global": true, "nonlocal": true, "try": true,
+	"elif": true, "else": true, "finally": true, "and": true,
+	"or": true, "not": true, "in": true, "is": true,
+	"None": true, "True": true, "False": true,
+	"import": true, "from": true, "as": true,
+}
 
 // Graph wraps types.Graph to allow defining methods in this package.
 type Graph struct {
@@ -246,6 +264,12 @@ func extractEdges(file types.FileEntry, pkgNames map[string]string, graph *types
 		}
 		pkgName := pkgNames[file.Path]
 		return parser.ExtractGoCallGraph(file.Path, content, pkgName, pkgNames, graph)
+	case types.LangPython:
+		content, err := os.ReadFile(file.AbsPath)
+		if err != nil {
+			return nil, err
+		}
+		return extractPythonCallGraph(file.Path, string(content), graph)
 	default:
 		// Try tree-sitter for call graph extraction on non-Go languages.
 		if parser.TreeSitterAvailable() {
@@ -253,6 +277,64 @@ func extractEdges(file types.FileEntry, pkgNames map[string]string, graph *types
 		}
 	}
 	return nil, nil
+}
+
+// extractPythonCallGraph performs heuristic call-graph extraction for Python
+// using regex-based scanning. It tracks function bodies by indentation and
+// looks for simple identifier(...) call patterns.
+func extractPythonCallGraph(file string, content string, graph *types.Graph) ([]types.Edge, error) {
+	var edges []types.Edge
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	lineNo := 0
+	var enclosingFunc string
+	var funcIndent int
+
+	for scanner.Scan() {
+		lineNo++
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		indent := len(line) - len(trimmed)
+
+		// Detect function / method definition.
+		if m := pyDefPat.FindStringSubmatch(trimmed); m != nil {
+			enclosingFunc = m[1]
+			funcIndent = indent
+			continue
+		}
+
+		// If we've dropped back to the same or lower indentation,
+		// we've exited the function body.
+		if enclosingFunc != "" && indent <= funcIndent {
+			enclosingFunc = ""
+			continue
+		}
+
+		// Inside a function body: look for call expressions.
+		if enclosingFunc != "" {
+			matches := pyCallPat.FindAllStringSubmatch(line, -1)
+			for _, match := range matches {
+				calleeName := match[1]
+				if pythonKeywords[calleeName] {
+					continue
+				}
+				callerID := findNodeIDByNameAndFileLocal(graph, enclosingFunc, file)
+				calleeID := findNodeIDByNameAndFileLocal(graph, calleeName, file)
+				if callerID != "" && calleeID != "" && callerID != calleeID {
+					edges = append(edges, types.Edge{
+						From: callerID,
+						To:   calleeID,
+						Kind: types.EdgeKindCalls,
+						File: file,
+						Line: lineNo,
+					})
+				}
+			}
+		}
+	}
+	return edges, scanner.Err()
 }
 
 // sanitizeFilename replaces path separators and other problematic characters.
@@ -287,4 +369,24 @@ func replaceAll(s, old, new string) string {
 		}
 	}
 	return s
+}
+
+// findNodeIDByNameAndFileLocal finds a unique node ID by name within a specific file.
+// Returns empty string if there is no match or multiple matches (ambiguous).
+func findNodeIDByNameAndFileLocal(graph *types.Graph, name, file string) string {
+	if graph == nil || name == "" {
+		return ""
+	}
+	candidates := graph.FindNodeByName(name, "")
+	var match string
+	for _, node := range candidates {
+		if node.File == file {
+			if match != "" {
+				// Multiple matches in same file — ambiguous, skip.
+				return ""
+			}
+			match = node.ID
+		}
+	}
+	return match
 }

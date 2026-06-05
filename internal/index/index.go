@@ -294,6 +294,7 @@ func extractGoSymbols(file string, content string) ([]types.Symbol, error) {
 func extractPythonSymbols(file string, content string) ([]types.Symbol, error) {
 	var syms []types.Symbol
 	var currentClass string
+	var classIndent int
 
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	lineNo := 0
@@ -305,15 +306,25 @@ func extractPythonSymbols(file string, content string) ([]types.Symbol, error) {
 			continue
 		}
 
+		indent := len(line) - len(trimmed)
+
 		if m := pyClassPat.FindStringSubmatch(trimmed); m != nil {
 			syms = append(syms, types.Symbol{Name: m[1], Kind: types.KindClass, File: file, Line: lineNo})
 			currentClass = m[1]
+			classIndent = indent
 		} else if m := pyDefPat.FindStringSubmatch(trimmed); m != nil {
-			if currentClass != "" {
+			if currentClass != "" && indent > classIndent {
 				syms = append(syms, types.Symbol{Name: m[1], Kind: types.KindMethod, File: file, Line: lineNo, Parent: currentClass})
 			} else {
+				// Def at same or lower indentation than class — it's a standalone function.
+				// Reset currentClass since we've exited the class body.
+				currentClass = ""
 				syms = append(syms, types.Symbol{Name: m[1], Kind: types.KindFunction, File: file, Line: lineNo})
 			}
+		} else if currentClass != "" && indent <= classIndent {
+			// Any non-empty, non-comment line at or before class indentation
+			// means we've exited the class body.
+			currentClass = ""
 		}
 	}
 	return syms, scanner.Err()
