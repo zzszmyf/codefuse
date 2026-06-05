@@ -30,6 +30,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newOutlineCmd())
 	root.AddCommand(newVFSCmd())
 	root.AddCommand(newMountCmd())
+	root.AddCommand(newSetupCmd())
 
 	return root
 }
@@ -151,4 +152,31 @@ func newMountCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&project, "project", "p", ".", "Project path")
 
 	return cmd
+}
+
+func newSetupCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "setup",
+		Short: "Set up codefuse dependencies and configuration",
+	}
+
+	var (
+		project string
+		auto    bool
+	)
+
+	treesitter := &cobra.Command{
+		Use:   "treesitter",
+		Short: "Set up tree-sitter grammars for your project's languages",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSetupTreeSitter(project, auto)
+		},
+	}
+
+	treesitter.Flags().StringVarP(&project, "project", "p", ".", "Project path")
+	treesitter.Flags().BoolVar(&auto, "auto", false, "Automatically clone and build missing grammars")
+
+	root.AddCommand(treesitter)
+	return root
 }

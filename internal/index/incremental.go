@@ -9,9 +9,10 @@ import (
 	"github.com/yifanmeng/codefuse/pkg/types"
 )
 
-// Manifest tracks file modification times for incremental indexing
+// Manifest tracks file modification times and index format version for incremental indexing
 type Manifest struct {
-	Files map[string]int64 `json:"files"` // path -> mtime
+	Version string            `json:"version,omitempty"` // index format version
+	Files   map[string]int64 `json:"files"`             // path -> mtime
 }
 
 // BuildIncremental performs incremental indexing, only re-parsing changed files.

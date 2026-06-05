@@ -8,6 +8,7 @@ import (
 
 	"github.com/yifanmeng/codefuse/internal/fusefs"
 	"github.com/yifanmeng/codefuse/internal/index"
+	"github.com/yifanmeng/codefuse/internal/parser"
 	"github.com/yifanmeng/codefuse/internal/scanner"
 	"github.com/yifanmeng/codefuse/internal/vfs"
 	"github.com/yifanmeng/codefuse/pkg/types"
@@ -112,8 +113,8 @@ func runQuery(project, symbolName, kind string, callers, callees bool) error {
 		return err
 	}
 
-	// Find matching nodes
-	results := graph.FindNodeByName(symbolName, kind)
+	// Find matching nodes (smart query: exact | prefix | glob)
+	results := graph.Query(symbolName, kind)
 	if len(results) == 0 {
 		fmt.Printf("No symbols found matching '%s'\n", symbolName)
 		return nil
@@ -244,4 +245,93 @@ func runMount(project, mountpoint string) error {
 	}
 
 	return fusefs.Mount(graph, mountpoint)
+}
+
+func runSetupTreeSitter(project string, auto bool) error {
+	absPath, err := filepath.Abs(project)
+	if err != nil {
+		return err
+	}
+
+	// Check tree-sitter CLI
+	if !parser.TreeSitterAvailable() {
+		return fmt.Errorf("tree-sitter CLI not found. Install it first:\n" +
+			"  npm install -g tree-sitter-cli\n" +
+			"Or visit https://tree-sitter.github.io/tree-sitter/")
+	}
+
+	// Scan project to detect languages
+	fmt.Fprintf(os.Stderr, "Scanning %s for languages...\n", absPath)
+	files, err := scanner.Scan(absPath)
+	if err != nil {
+		return fmt.Errorf("scan failed: %w", err)
+	}
+
+	langs := make(map[string]bool)
+	for _, f := range files {
+		langs[f.Language] = true
+	}
+
+	var langList []string
+	for l := range langs {
+		langList = append(langList, l)
+	}
+
+	if len(langList) == 0 {
+		fmt.Println("No source files found.")
+		return nil
+	}
+
+	fmt.Printf("Detected languages: %s\n", strings.Join(langList, ", "))
+
+	// Check missing grammars
+	missing, err := parser.DetectMissingGrammars(langList)
+	if err != nil {
+		return err
+	}
+
+	if len(missing) == 0 {
+		fmt.Println("✓ All tree-sitter grammars are already installed.")
+		return nil
+	}
+
+	fmt.Printf("\nMissing grammars (%d):\n", len(missing))
+	for _, g := range missing {
+		fmt.Printf("  • %s  (%s)\n", g.Lang, g.Repo)
+	}
+
+	if !auto {
+		fmt.Println("\nRun with --auto to install them automatically, or install manually:")
+		for _, g := range missing {
+			fmt.Printf("  git clone https://github.com/%s.git && cd %s && tree-sitter build --wasm\n",
+				g.Repo, g.DirName)
+		}
+		return nil
+	}
+
+	// Auto-install
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	grammarsDir := filepath.Join(home, ".config", "codefuse", "grammars")
+	if err := os.MkdirAll(grammarsDir, 0755); err != nil {
+		return err
+	}
+
+	// Add to tree-sitter config
+	if err := parser.AddParserDirectory(grammarsDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not update tree-sitter config: %v\n", err)
+	}
+
+	for _, g := range missing {
+		if err := parser.InstallGrammar(g, grammarsDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to install %s: %v\n", g.Lang, err)
+			continue
+		}
+		fmt.Printf("✓ Installed %s grammar\n", g.Lang)
+	}
+
+	fmt.Println("\nSetup complete. You can now use --treesitter for higher accuracy parsing.")
+	return nil
 }

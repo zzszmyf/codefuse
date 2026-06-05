@@ -3,6 +3,7 @@ package index
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -21,8 +22,9 @@ type SymbolDisplay struct {
 	Kind string
 }
 
-// Index holds the complete code index
+// Index holds the complete code index (v0.1 format).
 type Index struct {
+	Version     string              `json:"version,omitempty"`
 	ProjectPath string              `json:"project_path"`
 	Files       []types.FileEntry   `json:"files"`
 	Symbols     []types.Symbol      `json:"symbols"`
@@ -62,7 +64,10 @@ func Build(projectPath string, files []types.FileEntry, useTreeSitter bool) (*In
 	idx.buildSymbolMap()
 
 	// Save manifest for future incremental indexing
-	manifest := &Manifest{Files: make(map[string]int64)}
+	manifest := &Manifest{
+		Version: "1",
+		Files:   make(map[string]int64),
+	}
 	for _, f := range files {
 		manifest.Files[f.Path] = f.Mtime
 	}
@@ -87,7 +92,8 @@ func (idx *Index) Save(dir string) error {
 	return os.WriteFile(filepath.Join(dir, "index.json"), data, 0644)
 }
 
-// Load reads an index from disk
+// Load reads an index from disk.
+// Rejects v2+ graph.json indexes with a clear re-index message.
 func Load(dir string) (*Index, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "index.json"))
 	if err != nil {
@@ -97,6 +103,12 @@ func Load(dir string) (*Index, error) {
 	var idx Index
 	if err := json.Unmarshal(data, &idx); err != nil {
 		return nil, err
+	}
+
+	// Version check: v0.2+ uses graph.json (not index.json).
+	// If index.json has version != "1", it's incompatible.
+	if idx.Version != "" && idx.Version != "1" {
+		return nil, fmt.Errorf("index format version %s is incompatible (expected v1). Run 'codefuse index .' to re-index", idx.Version)
 	}
 
 	idx.buildSymbolMap()

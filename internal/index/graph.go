@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/yifanmeng/codefuse/internal/parser"
 	"github.com/yifanmeng/codefuse/pkg/types"
@@ -13,17 +15,20 @@ import (
 // Graph wraps types.Graph to allow defining methods in this package.
 type Graph struct {
 	types.Graph
+	nameTrie *symbolTrie // prefix index for fast name lookup
 }
 
 // NewGraph creates a new empty graph for the given project path.
 func NewGraph(projectPath string) *Graph {
-	return &Graph{Graph: types.Graph{
-		Version:     types.IndexVersion,
-		ProjectPath: projectPath,
-		Files:       make([]types.FileEntry, 0),
-		Nodes:       make([]types.Node, 0),
-		Edges:       make([]types.Edge, 0),
-	}}
+	return &Graph{
+		Graph: types.Graph{
+			Version:     types.IndexVersion,
+			ProjectPath: projectPath,
+			Files:       make([]types.FileEntry, 0),
+			Nodes:       make([]types.Node, 0),
+			Edges:       make([]types.Edge, 0),
+		},
+	}
 }
 
 // BuildGraph creates a Graph from scanned files, including call graph analysis.
@@ -40,6 +45,7 @@ func BuildGraph(projectPath string, files []types.FileEntry, useTreeSitter bool)
 
 	// Build node lookup index for cross-reference resolution.
 	graph.Graph.BuildIndexes()
+	graph.buildTrie()
 
 	// Phase 2: Extract edges (call graph) from all files in parallel.
 	graph.Edges = buildEdgesParallel(files, pkgNames, &graph.Graph)
@@ -48,7 +54,10 @@ func BuildGraph(projectPath string, files []types.FileEntry, useTreeSitter bool)
 	graph.Graph.BuildIndexes()
 
 	// Save manifest for incremental indexing.
-	manifest := &Manifest{Files: make(map[string]int64)}
+	manifest := &Manifest{
+		Version: types.IndexVersion,
+		Files:   make(map[string]int64),
+	}
 	for _, f := range files {
 		manifest.Files[f.Path] = f.Mtime
 	}
@@ -73,6 +82,12 @@ func (g *Graph) Save(dir string) error {
 
 // LoadGraph reads a graph from disk.
 func LoadGraph(dir string) (*Graph, error) {
+	// Check manifest version first
+	manifest, err := loadManifest(dir)
+	if err == nil && manifest.Version != "" && manifest.Version != types.IndexVersion {
+		return nil, fmt.Errorf("index format version %s is incompatible (expected %s). Run 'codefuse index .' to re-index", manifest.Version, types.IndexVersion)
+	}
+
 	data, err := os.ReadFile(filepath.Join(dir, "graph.json"))
 	if err != nil {
 		return nil, err
@@ -82,7 +97,9 @@ func LoadGraph(dir string) (*Graph, error) {
 		return nil, err
 	}
 	tg.BuildIndexes()
-	return &Graph{Graph: tg}, nil
+	graph := &Graph{Graph: tg}
+	graph.buildTrie()
+	return graph, nil
 }
 
 // LoadAny attempts to load a graph, falling back to v0.1 index format if needed.
@@ -108,7 +125,72 @@ func LoadAny(dir string) (*Graph, error) {
 		converted.Nodes[i] = sym.ToNode(types.LocationNodeID(sym.File, sym.Line, sym.Column))
 	}
 	converted.BuildIndexes()
+	converted.buildTrie()
 	return converted, nil
+}
+
+// =============================================================================
+// Trie-based prefix lookup
+// =============================================================================
+
+// buildTrie builds the prefix trie from all nodes.
+func (g *Graph) buildTrie() {
+	g.nameTrie = newSymbolTrie()
+	for i := range g.Nodes {
+		node := &g.Nodes[i]
+		g.nameTrie.Insert(node.Name, node.ID)
+	}
+}
+
+// FindNodeByPrefix returns nodes whose names start with the given prefix,
+// optionally filtered by kind. Uses the trie index for O(m + k) performance.
+func (g *Graph) FindNodeByPrefix(prefix, kind string) []types.Node {
+	if g.nameTrie == nil {
+		g.buildTrie()
+	}
+	ids := g.nameTrie.FindPrefix(prefix)
+	var results []types.Node
+	for _, id := range ids {
+		node := g.FindNodeByID(id)
+		if node != nil {
+			if kind == "" || node.Kind == kind {
+				results = append(results, *node)
+			}
+		}
+	}
+	return results
+}
+
+// FindNodeGlob returns nodes matching a glob pattern (*, ?, [abc]).
+func (g *Graph) FindNodeGlob(pattern, kind string) []types.Node {
+	var results []types.Node
+	for _, node := range g.Nodes {
+		matched, _ := path.Match(pattern, node.Name)
+		if matched {
+			if kind == "" || node.Kind == kind {
+				results = append(results, node)
+			}
+		}
+	}
+	return results
+}
+
+// Query is the smart entry point for symbol lookup.
+// Auto-detects query type: exact | prefix (foo*) | glob (*bar, b?r).
+func (g *Graph) Query(name, kind string) []types.Node {
+	if name == "" {
+		return nil
+	}
+	// Prefix pattern: "foo*" (only trailing wildcard, no others)
+	if strings.HasSuffix(name, "*") && !strings.ContainsAny(name[:len(name)-1], "*?[") {
+		return g.FindNodeByPrefix(name[:len(name)-1], kind)
+	}
+	// Glob pattern
+	if strings.ContainsAny(name, "*?[") {
+		return g.FindNodeGlob(name, kind)
+	}
+	// Exact match
+	return g.FindNodeByName(name, kind)
 }
 
 // extractNodes extracts nodes (symbols) from a single file.
@@ -206,4 +288,3 @@ func replaceAll(s, old, new string) string {
 	}
 	return s
 }
-
