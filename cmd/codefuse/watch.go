@@ -92,6 +92,19 @@ func (fw *fileWatcher) Watch() error {
 }
 
 func (fw *fileWatcher) handleEvent(event fsnotify.Event) {
+	// Handle Delete/Rename: remove nodes for the deleted file.
+	if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+		fw.mu.Lock()
+		relPath, _ := filepath.Rel(fw.projectPath, event.Name)
+		fw.removeFileNodes(relPath)
+		fw.graph.BuildIndexes()
+		fw.graph.BuildTrie()
+		fw.graph.Save(fw.indexDir)
+		fw.mu.Unlock()
+		fmt.Fprintf(os.Stderr, "  ✗ removed %s\n", relPath)
+		return
+	}
+
 	// Only Write and Create events on source files.
 	if event.Op&(fsnotify.Write|fsnotify.Create) == 0 {
 		return

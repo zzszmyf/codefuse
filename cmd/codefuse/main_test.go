@@ -46,10 +46,26 @@ func TestParseGrepFlags_CaseInsensitive(t *testing.T) {
 }
 
 func TestParseGrepFlags_Context(t *testing.T) {
+	// -C overwrites -A and -B (real grep behavior: last flag wins).
 	opts := parseGrepFlags([]string{"-A", "3", "-B", "2", "-C", "5", "pattern"})
-	assert.Equal(t, 3, opts.contextAfter)
-	assert.Equal(t, 2, opts.contextBefore)
+	assert.Equal(t, 5, opts.contextAfter)  // -C overwrites -A
+	assert.Equal(t, 5, opts.contextBefore) // -C overwrites -B
 	assert.Equal(t, 5, opts.contextAround)
+}
+
+func TestParseGrepFlags_CombinedNum(t *testing.T) {
+	opts := parseGrepFlags([]string{"-A3", "-B2", "-C5", "pattern"})
+	assert.Equal(t, 5, opts.contextAfter)
+	assert.Equal(t, 5, opts.contextBefore)
+	assert.Equal(t, 5, opts.contextAround)
+}
+
+func TestParseGrepFlags_MaxCount(t *testing.T) {
+	opts := parseGrepFlags([]string{"-m", "10", "pattern"})
+	assert.Equal(t, 10, opts.maxCount)
+
+	opts = parseGrepFlags([]string{"-m5", "pattern"})
+	assert.Equal(t, 5, opts.maxCount)
 }
 
 func TestParseGrepFlags_TextMode(t *testing.T) {

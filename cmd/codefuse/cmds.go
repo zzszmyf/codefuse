@@ -139,7 +139,7 @@ func runQuery(project, symbolName string, showCallers, showCallees bool) error {
 		return fmt.Errorf("no index found. Run 'codefuse index .' first: %w", err)
 	}
 
-	results := graph.Query(symbolName)
+	results := graph.Query(symbolName, false)
 	if len(results) == 0 {
 		fmt.Printf("No symbols found matching '%s'\n", symbolName)
 		return nil
@@ -265,6 +265,28 @@ func runWatch(project string) error {
 	fmt.Printf("Watching %s for changes...\n", absPath)
 	fmt.Println("Press Ctrl+C to stop.")
 	return w.Watch()
+}
+
+// =============================================================================
+// Serve (MCP Server)
+// =============================================================================
+
+func runServe(project string) error {
+	absPath, err := filepath.Abs(project)
+	if err != nil {
+		return fmt.Errorf("invalid path: %w", err)
+	}
+
+	server, err := newMCPServer(absPath)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "CodeFuse MCP server starting for %s\n", absPath)
+	fmt.Fprintf(os.Stderr, "Symbols: %d, Edges: %d\n", len(server.graph.Nodes), len(server.graph.Edges))
+	fmt.Fprintf(os.Stderr, "Waiting for MCP client connection...\n")
+
+	return server.serve()
 }
 
 // =============================================================================

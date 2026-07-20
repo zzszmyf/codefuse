@@ -339,14 +339,26 @@ func (g *Graph) FindNodeGlob(pattern string) []types.Node {
 
 // Query is the smart entry point for symbol lookup.
 // Auto-detects: exact → prefix ("foo*") → glob ("*bar", "b?z").
-func (g *Graph) Query(name string) []types.Node {
+// Query is the smart entry point for symbol lookup.
+// ignoreCase affects only prefix (trie) and exact match behavior.
+// Substring and camelCase matches are always case-insensitive.
+func (g *Graph) Query(name string, ignoreCase bool) []types.Node {
 	if name == "" {
 		return nil
 	}
 
 	// 1. Prefix pattern: "foo*" (only trailing wildcard).
 	if strings.HasSuffix(name, "*") && !strings.ContainsAny(name[:len(name)-1], "*?[") {
-		return g.FindNodeByPrefix(name[:len(name)-1])
+		prefix := name[:len(name)-1]
+		if ignoreCase {
+			// Trie is case-sensitive; for -i, try both cases.
+			results := g.FindNodeByPrefix(prefix)
+			if len(results) == 0 {
+				results = g.FindNodeByPrefix(strings.ToUpper(prefix[:1]) + prefix[1:])
+			}
+			return results
+		}
+		return g.FindNodeByPrefix(prefix)
 	}
 
 	// 2. Glob pattern: *, ?, [...]
@@ -354,19 +366,40 @@ func (g *Graph) Query(name string) []types.Node {
 		return g.FindNodeGlob(name)
 	}
 
-	// 3. Exact match — case-insensitive.
-	if results := g.findExact(name); len(results) > 0 {
+	// 3. Exact match.
+	if ignoreCase {
+		if results := g.findExact(name); len(results) > 0 {
+			return results
+		}
+	} else {
+		if results := g.findCaseSensitive(name); len(results) > 0 {
+			return results
+		}
+	}
+
+	// 4. CamelCase match: "PA" → "PageAttention", "SC" → "ServiceConfig".
+	if results := g.findCamelCase(name); len(results) > 0 {
 		return results
 	}
 
-	// 4. Substring match — for real-world queries like "PageAttention"
+	// 5. Substring match — for real-world queries like "PageAttention"
 	//    when the actual symbol is "PagedAttention".
 	if results := g.findSubstring(name); len(results) > 0 {
 		return results
 	}
 
-	// 5. Nothing found.
 	return nil
+}
+
+// findCaseSensitive returns nodes whose name matches (case-sensitive).
+func (g *Graph) findCaseSensitive(name string) []types.Node {
+	var results []types.Node
+	for _, node := range g.Nodes {
+		if node.Name == name {
+			results = append(results, node)
+		}
+	}
+	return results
 }
 
 // findExact returns nodes whose name equals the query (case-insensitive).
@@ -378,6 +411,43 @@ func (g *Graph) findExact(name string) []types.Node {
 		}
 	}
 	return results
+}
+
+// findCamelCase matches CamelCase abbreviations: "PA" → "PageAttention", "SC" → "ServiceConfig".
+// Only matches queries that are 2+ uppercase letters and contain no lowercase.
+func (g *Graph) findCamelCase(name string) []types.Node {
+	if len(name) < 2 || strings.ToUpper(name) != name {
+		return nil // only pure uppercase abbreviations trigger camelCase match
+	}
+	var results []types.Node
+	for _, node := range g.Nodes {
+		if camelMatch(node.Name, name) {
+			results = append(results, node)
+		}
+	}
+	return results
+}
+
+// camelMatch checks if an uppercase abbreviation matches a CamelCase symbol name.
+// e.g., "PA" matches "PageAttention", "SC" matches "ServiceConfig".
+func camelMatch(symbolName, abbrev string) bool {
+	if len(abbrev) < 2 {
+		return false
+	}
+	si := 0 // position in symbolName
+	ai := 0 // position in abbrev
+	for si < len(symbolName) && ai < len(abbrev) {
+		c := symbolName[si]
+		if c >= 'A' && c <= 'Z' {
+			if c == abbrev[ai] {
+				ai++
+			}
+			// If an uppercase letter doesn't match our abbrev,
+			// and we've already started matching, it breaks the sequence.
+		}
+		si++
+	}
+	return ai == len(abbrev) // all abbrev letters matched in order
 }
 
 // findSubstring returns nodes whose name contains the query substring (case-insensitive).

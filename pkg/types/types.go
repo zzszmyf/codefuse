@@ -18,15 +18,11 @@ type FileEntry struct {
 	IsTest   bool   `json:"is_test"`
 }
 
-// =============================================================================
-// Thin Index Types (v3+)
-// =============================================================================
-
 // Node is a lightweight symbol position. It stores only the name and location —
 // no kind, signature, parent, or docstring. Those are read from actual source
 // files on demand, ensuring the code remains the single source of truth.
 type Node struct {
-	ID     string `json:"id"`   // Globally unique: "file:line:col" or "pkg.Name"
+	ID     string `json:"id"`   // Globally unique: "file:line:col"
 	Name   string `json:"name"` // Short symbol name
 	File   string `json:"file"` // Relative file path
 	Line   int    `json:"line"`
@@ -37,27 +33,15 @@ type Node struct {
 type Edge struct {
 	From string `json:"from"` // Source node ID (caller)
 	To   string `json:"to"`   // Target node ID (callee)
-	Kind string `json:"kind"` // "calls", "contains", "imports", "implements"
+	Kind string `json:"kind"` // "calls"
 	File string `json:"file"` // File where the relationship occurs
 	Line int    `json:"line"` // Line number of the call site
 }
 
 // EdgeKind constants.
 const (
-	EdgeKindCalls      = "calls"
-	EdgeKindContains   = "contains"
-	EdgeKindImports    = "imports"
-	EdgeKindImplements = "implements"
+	EdgeKindCalls = "calls"
 )
-
-// Position is a file location used for query results and grep-format output.
-type Position struct {
-	File   string `json:"file"`
-	Line   int    `json:"line"`
-	Column int    `json:"column"`
-	Name   string `json:"name"`
-	LineContent string `json:"line_content,omitempty"` // The actual line from source
-}
 
 // Graph is the complete code index with thin nodes and edges.
 type Graph struct {
@@ -128,10 +112,6 @@ func (g *Graph) FindCallees(nodeID string) []Edge {
 	}
 	return g.edgesFrom[nodeID]
 }
-
-// =============================================================================
-// Node ID helpers
-// =============================================================================
 
 // LocationNodeID generates a node ID based on file + line + column.
 func LocationNodeID(file string, line, col int) string {

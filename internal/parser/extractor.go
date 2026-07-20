@@ -325,14 +325,8 @@ func extractName(node tsNode, nameTags []string) string {
 
 	// Direct attribute: tree-sitter puts the name in the "name" attribute
 	// for certain node types (e.g., <identifier name="foo"/>).
-	if node.Name != "" {
-		for _, tag := range node.XMLName.Local {
-			_ = tag
-		}
-		// Check if this node itself is an identifier-like tag.
-		if isNameTag(node.XMLName.Local, nameTags) && node.Name != "" {
-			return node.Name
-		}
+	if node.Name != "" && isNameTag(node.XMLName.Local, nameTags) {
+		return node.Name
 	}
 
 	// Search children for name-carrying nodes.
@@ -412,27 +406,4 @@ func findNodeInList(nodes []types.Node, name, file string) string {
 // BuiltinConfig returns the builtin language configuration.
 func BuiltinConfig() map[string]config.LangConfig {
 	return config.Builtin
-}
-
-// BuildExtToLang builds an extension→language map from the builtin config.
-func BuildExtToLang() map[string]string {
-	return config.ExtToLang
-}
-
-// SanitizeFilename replaces path separators and special characters.
-func SanitizeFilename(name string) string {
-	for _, r := range []struct{ old, new string }{
-		{"/", "_"}, {"\\", "_"}, {":", "_"},
-		{"*", "_"}, {"?", "_"}, {"\"", "_"},
-		{"<", "_"}, {">", "_"}, {"|", "_"},
-	} {
-		name = strings.ReplaceAll(name, r.old, r.new)
-	}
-	return name
-}
-
-// init ensures the XML parser is properly initialized.
-func init() {
-	// Verify xml.Unmarshal is available (compile-time check).
-	var _ = xml.Unmarshal
 }

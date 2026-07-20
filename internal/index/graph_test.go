@@ -42,7 +42,7 @@ func TestSaveAndLoadGraph(t *testing.T) {
 	assert.Len(t, loaded.Edges, 1)
 
 	// Query should work.
-	results := loaded.Query("Hello")
+	results := loaded.Query("Hello", false)
 	assert.Len(t, results, 1)
 	assert.Equal(t, "a.go", results[0].File)
 }
@@ -57,7 +57,7 @@ func TestQuery_ExactMatch(t *testing.T) {
 	g.BuildIndexes()
 	g.BuildTrie()
 
-	results := g.Query("AuthService")
+	results := g.Query("AuthService", false)
 	assert.Len(t, results, 1)
 	assert.Equal(t, "AuthService", results[0].Name)
 }
@@ -72,7 +72,7 @@ func TestQuery_PrefixMatch(t *testing.T) {
 	g.BuildIndexes()
 	g.BuildTrie()
 
-	results := g.Query("Auth*")
+	results := g.Query("Auth*", false)
 	assert.Len(t, results, 2)
 }
 
@@ -85,7 +85,7 @@ func TestQuery_GlobMatch(t *testing.T) {
 	g.BuildIndexes()
 	g.BuildTrie()
 
-	results := g.Query("*Service")
+	results := g.Query("*Service", false)
 	assert.Len(t, results, 1)
 	assert.Equal(t, "AuthService", results[0].Name)
 }
@@ -98,7 +98,7 @@ func TestQuery_NoMatch(t *testing.T) {
 	g.BuildIndexes()
 	g.BuildTrie()
 
-	results := g.Query("NotFound")
+	results := g.Query("NotFound", false)
 	assert.Empty(t, results)
 }
 

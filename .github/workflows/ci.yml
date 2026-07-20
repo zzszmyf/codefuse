@@ -20,20 +20,74 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
 
-      - name: Download dependencies
-        run: go mod download
+      - name: Set up Node (for tree-sitter CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install tree-sitter CLI
+        run: npm install -g tree-sitter-cli
+
+      - name: Install tree-sitter grammars
+        run: |
+          mkdir -p ~/.config/codefuse/grammars
+          for lang in go python java rust javascript typescript c cpp; do
+            case $lang in
+              typescript) repo="tree-sitter/tree-sitter-typescript/typescript" ;;
+              javascript) repo="tree-sitter/tree-sitter-javascript" ;;
+              c) repo="tree-sitter/tree-sitter-c" ;;
+              cpp) repo="tree-sitter/tree-sitter-cpp" ;;
+              *) repo="tree-sitter/tree-sitter-${lang}" ;;
+            esac
+            git clone --depth 1 "https://github.com/${repo}.git" ~/.config/codefuse/grammars/tree-sitter-${lang} 2>/dev/null || true
+          done
+          mkdir -p ~/.config/tree-sitter
+          echo '{"parser-directories":["'"$HOME"'/.config/codefuse/grammars"]}' > ~/.config/tree-sitter/config.json
 
       - name: Build
         run: go build ./cmd/codefuse
 
-      - name: Run tests
-        run: go test -race -coverprofile=coverage.out ./...
+      - name: Test
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Vet
+        run: go vet ./...
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
           files: coverage.out
           fail_ci_if_error: false
+
+  test-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        go-version: ['1.25']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install tree-sitter CLI
+        run: npm install -g tree-sitter-cli
+
+      - name: Build
+        run: go build ./cmd/codefuse
+
+      - name: Test
+        run: go test -v -race ./...
+
+      - name: Vet
+        run: go vet ./...
 
   lint:
     runs-on: ubuntu-latest

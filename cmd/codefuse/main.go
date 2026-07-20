@@ -55,6 +55,7 @@ for 100% accurate results.`,
 	root.AddCommand(newOutlineCmd())
 	root.AddCommand(newGrepCmd())
 	root.AddCommand(newWatchCmd())
+	root.AddCommand(newServeCmd())
 	root.AddCommand(newSetupCmd())
 
 	return root
@@ -172,6 +173,41 @@ func newWatchCmd() *cobra.Command {
 				project = "."
 			}
 			return runWatch(project)
+		},
+	}
+
+	return cmd
+}
+
+func newServeCmd() *cobra.Command {
+	var project string
+
+	cmd := &cobra.Command{
+		Use:   "serve [path]",
+		Short: "Start MCP server for AI agent integration (stdio JSON-RPC)",
+		Long: `Start an MCP (Model Context Protocol) server over stdio.
+
+Keeps the index loaded in memory for zero-latency queries.
+Exposes tools: find_symbol, find_callers, find_callees, get_outline.
+
+Claude Code / Cursor configuration:
+  {
+    "mcpServers": {
+      "codefuse": {
+        "command": "codefuse",
+        "args": ["serve", "/path/to/project"]
+      }
+    }
+  }`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				project = args[0]
+			}
+			if project == "" {
+				project = "."
+			}
+			return runServe(project)
 		},
 	}
 
