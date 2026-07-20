@@ -6,15 +6,16 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yifanmeng/codefuse/internal/fusefs"
 	"github.com/yifanmeng/codefuse/internal/index"
 	"github.com/yifanmeng/codefuse/internal/parser"
 	"github.com/yifanmeng/codefuse/internal/scanner"
-	"github.com/yifanmeng/codefuse/internal/vfs"
-	"github.com/yifanmeng/codefuse/pkg/types"
 )
 
-func runIndex(projectPath string, force, useTreeSitter bool) error {
+// =============================================================================
+// Index
+// =============================================================================
+
+func runIndex(projectPath string) error {
 	absPath, err := filepath.Abs(projectPath)
 	if err != nil {
 		return fmt.Errorf("invalid path: %w", err)
@@ -28,44 +29,44 @@ func runIndex(projectPath string, force, useTreeSitter bool) error {
 		return fmt.Errorf("path is not a directory: %s", absPath)
 	}
 
-	indexDir := filepath.Join(absPath, ".codefuse")
-	if !force {
-		if _, err := os.Stat(indexDir); err == nil {
-			// Check if index is up to date
-			// For now, just re-index
-		}
+	// Check tree-sitter availability.
+	if !parser.TreeSitterAvailable() {
+		fmt.Fprintln(os.Stderr, "⚠ tree-sitter CLI not found. Install it first:")
+		fmt.Fprintln(os.Stderr, "  npm install -g tree-sitter-cli")
+		fmt.Fprintln(os.Stderr, "  codefuse setup treesitter --auto")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Continuing with limited support (some languages may be skipped)...")
 	}
 
-	// Remove old index
-	os.RemoveAll(indexDir)
-	if err := os.MkdirAll(indexDir, 0755); err != nil {
-		return fmt.Errorf("cannot create index dir: %w", err)
-	}
-
-	// Phase 1: Scan files
+	// Scan files.
 	fmt.Fprintf(os.Stderr, "Scanning %s...\n", absPath)
 	files, err := scanner.Scan(absPath)
 	if err != nil {
 		return fmt.Errorf("scan failed: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Found %d files\n", len(files))
+	fmt.Fprintf(os.Stderr, "Found %d source files\n", len(files))
 
-	// Phase 2: Build graph index (v0.2+)
+	// Build thin index.
 	fmt.Fprintf(os.Stderr, "Building index...\n")
-	graph, err := index.BuildGraph(absPath, files, useTreeSitter)
+	graph, err := index.BuildGraph(absPath, files)
 	if err != nil {
 		return fmt.Errorf("index build failed: %w", err)
 	}
 
-	// Phase 3: Save graph
+	// Save.
+	indexDir := filepath.Join(absPath, ".codefuse")
 	if err := graph.Save(indexDir); err != nil {
-		return fmt.Errorf("save index failed: %w", err)
+		return fmt.Errorf("save failed: %w", err)
 	}
 
-	fmt.Printf("Indexed %d files, %d nodes, %d edges in %s\n",
+	fmt.Printf("Indexed %d files, %d symbols, %d edges in %s\n",
 		len(files), len(graph.Nodes), len(graph.Edges), absPath)
 	return nil
 }
+
+// =============================================================================
+// List
+// =============================================================================
 
 func runList(project string) error {
 	absPath, err := filepath.Abs(project)
@@ -74,95 +75,107 @@ func runList(project string) error {
 	}
 
 	indexDir := filepath.Join(absPath, ".codefuse")
-	graph, err := index.LoadAny(indexDir)
+	graph, err := index.LoadGraph(indexDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("no index found. Run 'codefuse index .' first: %w", err)
 	}
 
 	fmt.Printf("Project: %s\n", absPath)
 	fmt.Printf("Files:   %d\n", len(graph.Files))
-	fmt.Printf("Nodes:   %d\n", len(graph.Nodes))
+	fmt.Printf("Symbols: %d\n", len(graph.Nodes))
 	fmt.Printf("Edges:   %d\n\n", len(graph.Edges))
 
-	// Group nodes by kind
-	byKind := make(map[string][]types.Node)
+	// Group by first letter for quick overview.
+	byPrefix := make(map[string]int)
 	for _, node := range graph.Nodes {
-		byKind[node.Kind] = append(byKind[node.Kind], node)
-	}
-
-	for kind, nodes := range byKind {
-		fmt.Printf("[%s] (%d)\n", strings.ToUpper(kind), len(nodes))
-		for _, node := range nodes {
-			fmt.Printf("  %s\t%s:%d\n", node.Name, node.File, node.Line)
+		if len(node.Name) > 0 {
+			prefix := strings.ToUpper(node.Name[:1])
+			byPrefix[prefix]++
 		}
-		fmt.Println()
+	}
+	fmt.Println("Symbol distribution:")
+	for _, prefix := range sortedKeys(byPrefix) {
+		fmt.Printf("  %s: %d\n", prefix, byPrefix[prefix])
 	}
 
 	return nil
 }
 
-func runQuery(project, symbolName, kind string, callers, callees bool) error {
+func sortedKeys(m map[string]int) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	// Bubble sort (small map, readability > performance).
+	for i := 0; i < len(keys); i++ {
+		for j := i + 1; j < len(keys); j++ {
+			if keys[i] > keys[j] {
+				keys[i], keys[j] = keys[j], keys[i]
+			}
+		}
+	}
+	return keys
+}
+
+// =============================================================================
+// Query
+// =============================================================================
+
+func runQuery(project, symbolName string, showCallers, showCallees bool) error {
 	absPath, err := filepath.Abs(project)
 	if err != nil {
 		return err
 	}
 
 	indexDir := filepath.Join(absPath, ".codefuse")
-	graph, err := index.LoadAny(indexDir)
+	// Load full graph (with edges) only when --callers/--callees is used.
+	var graph *index.Graph
+	if showCallers || showCallees {
+		graph, err = index.LoadGraph(indexDir)
+	} else {
+		graph, err = index.LoadGraphNodes(indexDir)
+	}
 	if err != nil {
-		return err
+		return fmt.Errorf("no index found. Run 'codefuse index .' first: %w", err)
 	}
 
-	// Find matching nodes (smart query: exact | prefix | glob)
-	results := graph.Query(symbolName, kind)
+	results := graph.Query(symbolName)
 	if len(results) == 0 {
 		fmt.Printf("No symbols found matching '%s'\n", symbolName)
 		return nil
 	}
 
 	for _, node := range results {
-		fmt.Printf("%s %s\n", node.Kind, node.Name)
-		fmt.Printf("  ID:   %s\n", node.ID)
-		fmt.Printf("  File: %s:%d\n", node.File, node.Line)
-		if node.Signature != "" {
-			fmt.Printf("  Signature: %s\n", node.Signature)
-		}
-		if node.Docstring != "" {
-			fmt.Printf("  Doc: %s\n", node.Docstring)
+		// Read actual source line for current definition.
+		absFile := filepath.Join(absPath, node.File)
+		line, _ := index.ReadLine(absFile, node.Line)
+
+		fmt.Printf("%s:%d:%d  %s\n", node.File, node.Line, node.Column, node.Name)
+		if line != "" {
+			fmt.Printf("  %s\n", line)
 		}
 
-		// Call graph analysis
-		if callers {
+		if showCallers {
 			edges := graph.FindCallers(node.ID)
 			if len(edges) > 0 {
-				fmt.Printf("\n  Callers (%d):\n", len(edges))
-				for _, edge := range edges {
-					caller := graph.FindNodeByID(edge.From)
-					if caller != nil {
-						fmt.Printf("    → %s (%s) @ %s:%d\n", caller.Name, caller.Kind, edge.File, edge.Line)
-					} else {
-						fmt.Printf("    → %s @ %s:%d\n", edge.From, edge.File, edge.Line)
-					}
+				fmt.Printf("  Callers (%d):\n", len(edges))
+				for _, e := range edges {
+					fmt.Printf("    → %s @ %s:%d\n", e.Node.Name, e.Edge.File, e.Edge.Line)
 				}
 			} else {
-				fmt.Printf("\n  Callers: none\n")
+				fmt.Printf("  Callers: none\n")
 			}
 		}
 
-		if callees {
+		if showCallees {
 			edges := graph.FindCallees(node.ID)
 			if len(edges) > 0 {
-				fmt.Printf("\n  Callees (%d):\n", len(edges))
-				for _, edge := range edges {
-					callee := graph.FindNodeByID(edge.To)
-					if callee != nil {
-						fmt.Printf("    → %s (%s) @ %s:%d\n", callee.Name, callee.Kind, edge.File, edge.Line)
-					} else {
-						fmt.Printf("    → %s @ %s:%d\n", edge.To, edge.File, edge.Line)
-					}
+				fmt.Printf("  Callees (%d):\n", len(edges))
+				for _, e := range edges {
+					fmt.Printf("    → %s @ %s:%d\n", e.Node.Name, e.Edge.File, e.Edge.Line)
 				}
 			} else {
-				fmt.Printf("\n  Callees: none\n")
+				fmt.Printf("  Callees: none\n")
 			}
 		}
 
@@ -171,6 +184,10 @@ func runQuery(project, symbolName, kind string, callers, callees bool) error {
 
 	return nil
 }
+
+// =============================================================================
+// Outline
+// =============================================================================
 
 func runOutline(project, filePath string) error {
 	absPath, err := filepath.Abs(project)
@@ -179,15 +196,21 @@ func runOutline(project, filePath string) error {
 	}
 
 	indexDir := filepath.Join(absPath, ".codefuse")
-	graph, err := index.LoadAny(indexDir)
+	graph, err := index.LoadGraph(indexDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("no index found. Run 'codefuse index .' first: %w", err)
 	}
 
-	var outline []types.Node
+	var outline []struct {
+		line int
+		name string
+	}
 	for _, node := range graph.Nodes {
-		if node.File == filePath {
-			outline = append(outline, node)
+		if node.File == filePath || strings.HasSuffix(node.File, filePath) {
+			outline = append(outline, struct {
+				line int
+				name string
+			}{node.Line, node.Name})
 		}
 	}
 
@@ -196,56 +219,57 @@ func runOutline(project, filePath string) error {
 		return nil
 	}
 
+	// Sort by line.
+	for i := 0; i < len(outline); i++ {
+		for j := i + 1; j < len(outline); j++ {
+			if outline[i].line > outline[j].line {
+				outline[i], outline[j] = outline[j], outline[i]
+			}
+		}
+	}
+
 	fmt.Printf("Outline: %s\n\n", filePath)
-	for _, node := range outline {
-		fmt.Printf("L%03d\t%s\t%s\n", node.Line, node.Kind, node.Name)
+	for _, s := range outline {
+		fmt.Printf("L%03d  %s\n", s.line, s.name)
 	}
 
 	return nil
 }
 
-func runVFSGenerate(project string) error {
+// =============================================================================
+// Watch
+// =============================================================================
+
+func runWatch(project string) error {
 	absPath, err := filepath.Abs(project)
 	if err != nil {
 		return err
 	}
 
+	// Ensure index exists.
 	indexDir := filepath.Join(absPath, ".codefuse")
-	graph, err := index.LoadAny(indexDir)
+	if _, err := os.Stat(filepath.Join(indexDir, "graph.json")); os.IsNotExist(err) {
+		fmt.Fprintln(os.Stderr, "No index found. Building initial index...")
+		if err := runIndex(project); err != nil {
+			return err
+		}
+	}
+
+	// Start watching.
+	w, err := newFileWatcher(absPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("watch failed: %w", err)
 	}
+	defer w.Close()
 
-	fmt.Fprintf(os.Stderr, "Generating VFS views...\n")
-	gen := vfs.NewGenerator(graph, absPath)
-	if err := gen.GenerateAll(); err != nil {
-		return fmt.Errorf("vfs generation failed: %w", err)
-	}
-
-	fmt.Printf("VFS views generated in %s\n", filepath.Join(absPath, ".codefuse", "vfs"))
-	return nil
+	fmt.Printf("Watching %s for changes...\n", absPath)
+	fmt.Println("Press Ctrl+C to stop.")
+	return w.Watch()
 }
 
-func runMount(project, mountpoint string) error {
-	if !fusefs.IsSupported() {
-		return fmt.Errorf("FUSE is not supported on this system. " +
-			"On macOS, install macFUSE (https://macfuse.io/). " +
-			"On Linux, ensure /dev/fuse exists.")
-	}
-
-	absPath, err := filepath.Abs(project)
-	if err != nil {
-		return err
-	}
-
-	indexDir := filepath.Join(absPath, ".codefuse")
-	graph, err := index.LoadAny(indexDir)
-	if err != nil {
-		return err
-	}
-
-	return fusefs.Mount(graph, mountpoint)
-}
+// =============================================================================
+// Setup
+// =============================================================================
 
 func runSetupTreeSitter(project string, auto bool) error {
 	absPath, err := filepath.Abs(project)
@@ -253,14 +277,12 @@ func runSetupTreeSitter(project string, auto bool) error {
 		return err
 	}
 
-	// Check tree-sitter CLI
 	if !parser.TreeSitterAvailable() {
 		return fmt.Errorf("tree-sitter CLI not found. Install it first:\n" +
 			"  npm install -g tree-sitter-cli\n" +
 			"Or visit https://tree-sitter.github.io/tree-sitter/")
 	}
 
-	// Scan project to detect languages
 	fmt.Fprintf(os.Stderr, "Scanning %s for languages...\n", absPath)
 	files, err := scanner.Scan(absPath)
 	if err != nil {
@@ -284,7 +306,6 @@ func runSetupTreeSitter(project string, auto bool) error {
 
 	fmt.Printf("Detected languages: %s\n", strings.Join(langList, ", "))
 
-	// Check missing grammars
 	missing, err := parser.DetectMissingGrammars(langList)
 	if err != nil {
 		return err
@@ -301,15 +322,10 @@ func runSetupTreeSitter(project string, auto bool) error {
 	}
 
 	if !auto {
-		fmt.Println("\nRun with --auto to install them automatically, or install manually:")
-		for _, g := range missing {
-			fmt.Printf("  git clone https://github.com/%s.git && cd %s && tree-sitter build --wasm\n",
-				g.Repo, g.DirName)
-		}
+		fmt.Println("\nRun with --auto to install them automatically.")
 		return nil
 	}
 
-	// Auto-install
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -319,7 +335,6 @@ func runSetupTreeSitter(project string, auto bool) error {
 		return err
 	}
 
-	// Add to tree-sitter config
 	if err := parser.AddParserDirectory(grammarsDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not update tree-sitter config: %v\n", err)
 	}
@@ -332,6 +347,6 @@ func runSetupTreeSitter(project string, auto bool) error {
 		fmt.Printf("✓ Installed %s grammar\n", g.Lang)
 	}
 
-	fmt.Println("\nSetup complete. You can now use --treesitter for higher accuracy parsing.")
+	fmt.Println("\nSetup complete. Run 'codefuse index .' to build the index.")
 	return nil
 }

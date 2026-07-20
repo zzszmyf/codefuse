@@ -3,7 +3,7 @@ module github.com/yifanmeng/codefuse
 go 1.25.0
 
 require (
-	github.com/hanwen/go-fuse/v2 v2.10.1
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 )

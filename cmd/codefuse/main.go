@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -10,17 +12,40 @@ import (
 var version = "dev"
 
 func main() {
+	// Grep-compatible mode: when argv[0] is "grep", behave like grep.
+	if isGrepMode() {
+		if err := runGrepCompat(os.Args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
+// isGrepMode returns true if the binary is invoked as "grep".
+func isGrepMode() bool {
+	base := filepath.Base(os.Args[0])
+	return base == "grep" || strings.HasPrefix(base, "grep")
+}
+
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:     "codefuse",
-		Short:   "CodeFuse - Code Virtual File System for AI Agents",
-		Long:    `CodeFuse indexes your codebase and exposes it as queryable views.`,
+		Use:   "codefuse",
+		Short: "CodeFuse — grep replacement for AI agents",
+		Long: `CodeFuse indexes your codebase into a thin symbol→location map,
+then exposes it via a grep-compatible interface.
+
+When invoked as "grep" (symlink or renamed binary), it behaves exactly
+like grep — same flags, same output format — but returns symbol
+definitions instead of raw text matches.
+
+Index is built once, queries hit the index + actual source files
+for 100% accurate results.`,
 		Version: version,
 	}
 
@@ -28,32 +53,30 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newListCmd())
 	root.AddCommand(newQueryCmd())
 	root.AddCommand(newOutlineCmd())
-	root.AddCommand(newVFSCmd())
-	root.AddCommand(newMountCmd())
+	root.AddCommand(newGrepCmd())
+	root.AddCommand(newWatchCmd())
 	root.AddCommand(newSetupCmd())
 
 	return root
 }
 
 func newIndexCmd() *cobra.Command {
-	var (
-		projectPath    string
-		force          bool
-		useTreeSitter  bool
-	)
+	var projectPath string
 
 	cmd := &cobra.Command{
-		Use:   "index <path>",
-		Short: "Index a codebase",
-		Args:  cobra.ExactArgs(1),
+		Use:   "index [path]",
+		Short: "Build the thin symbol index for a codebase",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectPath = args[0]
-			return runIndex(projectPath, force, useTreeSitter)
+			if len(args) > 0 {
+				projectPath = args[0]
+			}
+			if projectPath == "" {
+				projectPath = "."
+			}
+			return runIndex(projectPath)
 		},
 	}
-
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force re-index even if up to date")
-	cmd.Flags().BoolVar(&useTreeSitter, "treesitter", false, "Use tree-sitter CLI for parsing (higher accuracy, slower first run)")
 
 	return cmd
 }
@@ -69,7 +92,7 @@ func newListCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&project, "project", "p", ".", "Project path (defaults to current directory)")
+	cmd.Flags().StringVarP(&project, "project", "p", ".", "Project path")
 
 	return cmd
 }
@@ -77,7 +100,6 @@ func newListCmd() *cobra.Command {
 func newQueryCmd() *cobra.Command {
 	var (
 		project string
-		kind    string
 		callers bool
 		callees bool
 	)
@@ -87,14 +109,13 @@ func newQueryCmd() *cobra.Command {
 		Short: "Query a symbol in the index",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runQuery(project, args[0], kind, callers, callees)
+			return runQuery(project, args[0], callers, callees)
 		},
 	}
 
 	cmd.Flags().StringVarP(&project, "project", "p", ".", "Project path")
-	cmd.Flags().StringVarP(&kind, "kind", "k", "", "Filter by symbol kind (func, class, var, etc.)")
-	cmd.Flags().BoolVar(&callers, "callers", false, "Show who calls this symbol (requires call graph)")
-	cmd.Flags().BoolVar(&callees, "callees", false, "Show who this symbol calls (requires call graph)")
+	cmd.Flags().BoolVar(&callers, "callers", false, "Show who calls this symbol")
+	cmd.Flags().BoolVar(&callees, "callees", false, "Show who this symbol calls")
 
 	return cmd
 }
@@ -104,7 +125,7 @@ func newOutlineCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "outline <file>",
-		Short: "Show the structured outline of a file",
+		Short: "Show symbols in a file, sorted by line",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runOutline(project, args[0])
@@ -116,40 +137,43 @@ func newOutlineCmd() *cobra.Command {
 	return cmd
 }
 
-func newVFSCmd() *cobra.Command {
-	var project string
-
+func newGrepCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "vfs",
-		Short: "Virtual filesystem views for code exploration",
-	}
+		Use:   "grep [grep-flags] <pattern> [path...]",
+		Short: "Grep-compatible symbol search (fallback to real grep for text)",
+		Long: `Search symbols using grep-compatible syntax.
 
-	generate := &cobra.Command{
-		Use:   "generate",
-		Short: "Generate VFS views (symbols, outline, references) in .codefuse/vfs/",
+This command mimics grep: same flags (-rn, -l, -i, -c, -w, -A/-B/-C),
+same output format (file:line:content). It queries the thin index for
+symbol definitions and reads actual source files for current content.
+
+Use -t/--text to skip the index and run real grep directly.`,
+		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runVFSGenerate(project)
+			return runGrepCompat(args)
 		},
 	}
-	generate.Flags().StringVarP(&project, "project", "p", ".", "Project path")
 
-	cmd.AddCommand(generate)
 	return cmd
 }
 
-func newMountCmd() *cobra.Command {
+func newWatchCmd() *cobra.Command {
 	var project string
 
 	cmd := &cobra.Command{
-		Use:   "mount <mountpoint>",
-		Short: "Mount the codebase as a virtual filesystem (FUSE)",
-		Args:  cobra.ExactArgs(1),
+		Use:   "watch [path]",
+		Short: "Watch for file changes and update index in real time",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMount(project, args[0])
+			if len(args) > 0 {
+				project = args[0]
+			}
+			if project == "" {
+				project = "."
+			}
+			return runWatch(project)
 		},
 	}
-
-	cmd.Flags().StringVarP(&project, "project", "p", ".", "Project path")
 
 	return cmd
 }
@@ -157,7 +181,7 @@ func newMountCmd() *cobra.Command {
 func newSetupCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "setup",
-		Short: "Set up codefuse dependencies and configuration",
+		Short: "Set up codefuse dependencies",
 	}
 
 	var (
@@ -167,7 +191,7 @@ func newSetupCmd() *cobra.Command {
 
 	treesitter := &cobra.Command{
 		Use:   "treesitter",
-		Short: "Set up tree-sitter grammars for your project's languages",
+		Short: "Install tree-sitter grammars for detected languages",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSetupTreeSitter(project, auto)
@@ -175,7 +199,7 @@ func newSetupCmd() *cobra.Command {
 	}
 
 	treesitter.Flags().StringVarP(&project, "project", "p", ".", "Project path")
-	treesitter.Flags().BoolVar(&auto, "auto", false, "Automatically clone and build missing grammars")
+	treesitter.Flags().BoolVar(&auto, "auto", false, "Automatically install missing grammars")
 
 	root.AddCommand(treesitter)
 	return root

@@ -1,3 +1,5 @@
+// Package scanner walks a project directory and collects source files.
+// Language detection is driven by the config package — no hardcoded language lists.
 package scanner
 
 import (
@@ -5,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/yifanmeng/codefuse/pkg/config"
 	"github.com/yifanmeng/codefuse/pkg/types"
 )
 
@@ -28,29 +31,13 @@ var skipDirs = map[string]bool{
 	"venv":         true,
 }
 
-var sourceExts = map[string]string{
-	".go":    types.LangGo,
-	".py":    types.LangPython,
-	".rs":    types.LangRust,
-	".js":    types.LangJS,
-	".jsx":   types.LangJS,
-	".ts":    types.LangTS,
-	".tsx":   types.LangTS,
-	".java":  types.LangJava,
-	".c":     types.LangC,
-	".h":     types.LangC,
-	".cpp":   types.LangCPP,
-	".cc":    types.LangCPP,
-	".hpp":   types.LangCPP,
-}
-
-// Scan walks the project directory and returns source files
+// Scan walks the project directory and returns source files with language info.
 func Scan(root string) ([]types.FileEntry, error) {
 	var files []types.FileEntry
 
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // skip unreadable entries
+			return nil
 		}
 
 		rel, _ := filepath.Rel(root, path)
@@ -58,7 +45,6 @@ func Scan(root string) ([]types.FileEntry, error) {
 			return nil
 		}
 
-		// Skip hidden dirs and known non-source dirs
 		if d.IsDir() {
 			name := d.Name()
 			if strings.HasPrefix(name, ".") && name != "." {
@@ -72,9 +58,8 @@ func Scan(root string) ([]types.FileEntry, error) {
 			return nil
 		}
 
-		// Only source files
 		ext := strings.ToLower(filepath.Ext(path))
-		lang, ok := sourceExts[ext]
+		lang, ok := config.ExtToLang[ext]
 		if !ok {
 			return nil
 		}
@@ -84,13 +69,14 @@ func Scan(root string) ([]types.FileEntry, error) {
 			return nil
 		}
 
+		cfg := config.Builtin[lang]
 		files = append(files, types.FileEntry{
 			Path:     rel,
 			AbsPath:  path,
 			Language: lang,
 			Size:     info.Size(),
 			Mtime:    info.ModTime().UnixNano(),
-			IsTest:   isTestFile(rel, lang),
+			IsTest:   isTestFile(rel, cfg.TestPatterns),
 		})
 
 		return nil
@@ -99,17 +85,12 @@ func Scan(root string) ([]types.FileEntry, error) {
 	return files, err
 }
 
-func isTestFile(path string, lang string) bool {
+func isTestFile(path string, patterns []string) bool {
 	base := filepath.Base(path)
-	switch lang {
-	case types.LangGo:
-		return strings.HasSuffix(base, "_test.go")
-	case types.LangPython:
-		return strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py")
-	case types.LangRust:
-		return strings.HasSuffix(base, ".rs") && strings.Contains(base, "test")
-	case types.LangJS, types.LangTS:
-		return strings.Contains(base, ".test.") || strings.Contains(base, ".spec.")
+	for _, p := range patterns {
+		if strings.Contains(base, p) {
+			return true
+		}
 	}
 	return false
 }

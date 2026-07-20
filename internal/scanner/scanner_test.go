@@ -7,13 +7,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yifanmeng/codefuse/pkg/types"
 )
 
 func TestScan_FindsSourceFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create source files
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "utils.py"), []byte("def utils(): pass"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "app.rs"), []byte("fn main() {}"), 0644))
@@ -27,21 +25,19 @@ func TestScan_FindsSourceFiles(t *testing.T) {
 	for _, f := range files {
 		langs[f.Language] = true
 	}
-	assert.True(t, langs[types.LangGo])
-	assert.True(t, langs[types.LangPython])
-	assert.True(t, langs[types.LangRust])
-	assert.True(t, langs[types.LangJS])
+	assert.True(t, langs["go"])
+	assert.True(t, langs["python"])
+	assert.True(t, langs["rust"])
+	assert.True(t, langs["javascript"])
 }
 
 func TestScan_SkipsIgnoredDirs(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create a file in node_modules
 	nodeModDir := filepath.Join(tmpDir, "node_modules", "somepkg")
 	require.NoError(t, os.MkdirAll(nodeModDir, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(nodeModDir, "index.js"), []byte(""), 0644))
 
-	// Create a real source file
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0644))
 
 	files, err := Scan(tmpDir)
