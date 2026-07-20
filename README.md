@@ -163,12 +163,91 @@ CodeFuse — three layers, one job: find symbols fast.
 | `codefuse watch [path]` | Watch files and auto-update index |
 | `codefuse setup treesitter --auto` | Install tree-sitter grammars |
 
+## Replace grep
+
+CodeFuse is designed to be a **transparent drop-in** — no configuration, no workflow changes, no new tool for AI agents to learn.
+
+### Option 1: Symlink (recommended)
+
+```bash
+# Replace grep system-wide
+ln -sf $(which codefuse) /usr/local/bin/grep
+
+# Now every grep call uses CodeFuse under the hood:
+grep "AuthService" -rn ./src
+# → returns symbol definitions, not text matches
+# → falls back to real grep when there's no index or --text is used
+```
+
+### Option 2: Alias
+
+```bash
+# In your shell config (.zshrc / .bashrc):
+alias grep='codefuse grep'
+
+# Or for AI agent sessions, set in the agent's environment:
+export PATH="/path/to/codefuse-dir:$PATH"  # where a 'grep' symlink lives
+```
+
+### Option 3: AI agent configuration
+
+Most AI coding agents call `grep` as a shell tool. No agent-side changes needed — just make sure `grep` resolves to CodeFuse:
+
+```json
+// Claude Code settings.json — no changes needed, just ensure PATH includes codefuse
+// Cursor / Copilot — no changes, they use the system grep
+```
+
+If the agent allows custom tool definitions, you can also expose `codefuse grep` as a separate tool while keeping native `grep` for actual text searches:
+
+```json
+{
+  "tools": {
+    "grep": "codefuse grep",       // symbol search (index-powered)
+    "greptext": "grep --text"      // text search (real grep fallback)
+  }
+}
+```
+
+### How the fallback works
+
+```
+User/Agent runs: grep "some_query" -rn ./
+
+    Is there a .codefuse/ index?
+    ├─ YES → Query index for symbol definitions
+    │         ├─ Found → Output grep-format results (file:line:content)
+    │         └─ Not found → Fall through to real grep
+    │                        (captures text in comments, strings, etc.)
+    └─ NO  → Fall through to real grep
+              (behaves exactly like native grep)
+
+    --text / -t flag → Skip index, always use real grep
+```
+
+**The result:** zero risk. If indexing isn't set up, or the symbol isn't in the index, or you pass `--text` — it's just grep.
+
+### Per-project setup
+
+```bash
+# One-time setup per project:
+cd my-project
+codefuse setup treesitter --auto   # install grammars (once per machine)
+codefuse index .                    # build index (15-30s)
+codefuse watch &                    # optional: keep index live
+
+# From now on, grep in this project uses the index:
+grep "Scheduler" -rn .
+# → 2 results (symbol definitions) instead of 512 (text matches)
+```
+
 ## Design Principles
 
 1. **Code is the only truth.** The index stores positions, never content. Every query reads actual source files.
 2. **Language is configuration, not code.** New language = 5 lines of tree-sitter node types. No parser to write.
 3. **Don't change the user.** Same flags as grep, same output format. Drop the binary in, rename it `grep`, done.
 4. **Fast to rebuild.** Full re-index takes 15–30s. No need for complex incremental consistency guarantees.
+5. **Safe by default.** No index? Falls back to real grep. Wrong result? Pass `--text` to bypass. Zero risk.
 
 ## License
 
