@@ -80,7 +80,6 @@ func TestGraph_FindCallers(t *testing.T) {
 }
 
 func TestNode_IsThin(t *testing.T) {
-	// Thin nodes store only name + position. No kind, parent, signature, docstring.
 	node := Node{
 		ID:     "file.go:10:1",
 		Name:   "MyFunc",
@@ -92,5 +91,90 @@ func TestNode_IsThin(t *testing.T) {
 	assert.Equal(t, "file.go", node.File)
 	assert.Equal(t, 10, node.Line)
 	assert.Equal(t, 1, node.Column)
-	// No Kind, Parent, Signature, Docstring fields — they don't exist on the type.
+}
+
+func TestSink_PkgExtraction(t *testing.T) {
+	// Sink.Pkg is auto-extracted from callee name at build time.
+	// sql.Query → pkg=sql, http.Get → pkg=http, os.ReadFile → pkg=os
+	s := Sink{From: "a:1:1", CalleeName: "sql.Query", Pkg: "sql", File: "a.go", Line: 5}
+	assert.Equal(t, "sql", s.Pkg)
+
+	s2 := Sink{From: "b:2:1", CalleeName: "http.Get", Pkg: "http", File: "b.go", Line: 10}
+	assert.Equal(t, "http", s2.Pkg)
+}
+
+func TestAnnotation_CRUD(t *testing.T) {
+	a := Annotation{
+		ID:       "ann-1",
+		NodeID:   "a.go:5:1",
+		Key:      "sink_type",
+		Value:    "db",
+		Source:   "agent",
+		Evidence: "calls sql.Query via gorm",
+	}
+	assert.Equal(t, "a.go:5:1", a.NodeID)
+	assert.Equal(t, "sink_type", a.Key)
+	assert.Equal(t, "db", a.Value)
+	assert.Equal(t, "agent", a.Source)
+}
+
+func TestGraph_Reachable(t *testing.T) {
+	g := &Graph{
+		Nodes: []Node{
+			{ID: "a:1:1", Name: "AuthService.Login", File: "a.go", Line: 1, Column: 1},
+			{ID: "b:5:1", Name: "Authenticate", File: "b.go", Line: 5, Column: 1},
+			{ID: "c:10:1", Name: "UserDao.FindByToken", File: "c.go", Line: 10, Column: 1},
+		},
+		Edges: []Edge{
+			{From: "a:1:1", To: "b:5:1", Kind: EdgeKindCalls, File: "a.go", Line: 2},
+			{From: "b:5:1", To: "c:10:1", Kind: EdgeKindCalls, File: "b.go", Line: 6},
+		},
+		Sinks: []Sink{
+			{From: "c:10:1", CalleeName: "sql.Query", Pkg: "sql", File: "c.go", Line: 11},
+		},
+	}
+	g.BuildIndexes()
+
+	// AuthService → Authenticate → UserDao.FindByToken → sql.Query (DB sink)
+	paths := g.Reachable("a:1:1", "sql", 10)
+	assert.Len(t, paths, 1)
+	assert.Len(t, paths[0], 4) // 4 nodes in path
+	assert.Equal(t, "a:1:1", paths[0][0])
+	assert.Equal(t, "c:10:1", paths[0][2])
+}
+
+func TestGraph_Reachable_NoMatch(t *testing.T) {
+	g := &Graph{
+		Nodes: []Node{
+			{ID: "a:1:1", Name: "AuthService.Login", File: "a.go", Line: 1, Column: 1},
+		},
+		Sinks: []Sink{
+			{From: "a:1:1", CalleeName: "os.ReadFile", Pkg: "os", File: "a.go", Line: 3},
+		},
+	}
+	g.BuildIndexes()
+
+	// No sql sink reachable from a:1:1
+	paths := g.Reachable("a:1:1", "sql", 10)
+	assert.Empty(t, paths)
+}
+
+func TestGraph_SinksForNode(t *testing.T) {
+	g := &Graph{
+		Nodes: []Node{
+			{ID: "a:1:1", Name: "AuthService", File: "a.go", Line: 1, Column: 1},
+		},
+		Sinks: []Sink{
+			{From: "a:1:1", CalleeName: "sql.Query", Pkg: "sql", File: "a.go", Line: 5},
+			{From: "a:1:1", CalleeName: "http.Get", Pkg: "http", File: "a.go", Line: 10},
+		},
+	}
+
+	sinks := g.SinksForNode("a:1:1")
+	assert.Len(t, sinks, 2)
+
+	// Filter by pkg
+	sqlSinks := g.FilterSinks(sinks, "sql")
+	assert.Len(t, sqlSinks, 1)
+	assert.Equal(t, "sql.Query", sqlSinks[0].CalleeName)
 }

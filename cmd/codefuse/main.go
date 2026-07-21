@@ -53,6 +53,8 @@ for 100% accurate results.`,
 	root.AddCommand(newListCmd())
 	root.AddCommand(newQueryCmd())
 	root.AddCommand(newOutlineCmd())
+	root.AddCommand(newSinksCmd())
+	root.AddCommand(newReachableCmd())
 	root.AddCommand(newGrepCmd())
 	root.AddCommand(newWatchCmd())
 	root.AddCommand(newServeCmd())
@@ -176,6 +178,50 @@ func newWatchCmd() *cobra.Command {
 		},
 	}
 
+	return cmd
+}
+
+func newSinksCmd() *cobra.Command {
+	var project, pkg string
+	cmd := &cobra.Command{
+		Use:   "sinks [symbol]",
+		Short: "Show external calls (sinks) grouped by package",
+		Long: `List external calls made by the project, grouped by package name.
+If a symbol name is given, show only sinks for that symbol.
+Use --pkg to filter by a specific package (e.g. "sql", "http").`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			nodeName := ""
+			if len(args) > 0 {
+				nodeName = args[0]
+			}
+			return runSinks(project, nodeName, pkg)
+		},
+	}
+	cmd.Flags().StringVarP(&project, "project", "p", ".", "Project path")
+	cmd.Flags().StringVar(&pkg, "pkg", "", "Filter by package name")
+	return cmd
+}
+
+func newReachableCmd() *cobra.Command {
+	var project, pkg string
+	cmd := &cobra.Command{
+		Use:   "reachable <symbol>",
+		Short: "Find paths from a symbol to external calls matching a package pattern",
+		Long: `Performs BFS from the given symbol, following call edges,
+and finds all paths that reach external calls matching --pkg.
+
+Example:
+  codefuse reachable AuthService --pkg sql
+  → AuthService → Authenticate → UserDao → sql.Query`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runReachable(project, args[0], pkg)
+		},
+	}
+	cmd.Flags().StringVarP(&project, "project", "p", ".", "Project path")
+	cmd.Flags().StringVar(&pkg, "pkg", "", "Package pattern to search for (required)")
+	cmd.MarkFlagRequired("pkg")
 	return cmd
 }
 

@@ -18,11 +18,12 @@ import (
 )
 
 func init() {
-	// Register types for gob encoding.
 	gob.Register(types.Graph{})
 	gob.Register(types.Node{})
 	gob.Register(types.Edge{})
 	gob.Register(types.FileEntry{})
+	gob.Register(types.Sink{})
+	gob.Register(types.Annotation{})
 }
 
 // Graph wraps types.Graph with a prefix trie for fast name lookup.
@@ -47,25 +48,29 @@ func NewGraph(projectPath string) *Graph {
 // BuildGraph builds a thin index from scanned files.
 //
 // Process:
-//  1. Extract nodes + raw edges from all files via tree-sitter (batch mode).
-//  2. Build runtime indexes (nodeByID, nodesByName, trie).
+//  1. Extract nodes + edges + sinks from all files via tree-sitter (batch mode).
+//  2. Build runtime indexes.
 //  3. Resolve edge targets (callee names → node IDs).
-//  4. Save manifest for incremental indexing.
+//  4. Collect sinks (unresolved external calls, auto-tagged by package name).
+//  5. Save manifest for incremental indexing.
 func BuildGraph(projectPath string, files []types.FileEntry) (*Graph, error) {
 	graph := NewGraph(projectPath)
 	graph.Files = files
 
-	// Phase 1: Extract nodes and raw edges via tree-sitter batch.
-	nodesByFile, edgesByFile, failed := parser.ExtractBatch(files)
+	// Phase 1: Extract nodes, edges, and sinks via tree-sitter batch.
+	nodesByFile, edgesByFile, sinksByFile, failed := parser.ExtractBatch(files)
 
 	// For failed files, try individual extraction.
 	for _, f := range failed {
-		nodes, edges, _ := parser.ExtractFile(f.AbsPath, f.Path, f.Language)
+		nodes, edges, sinks, _ := parser.ExtractFile(f.AbsPath, f.Path, f.Language)
 		if len(nodes) > 0 {
 			nodesByFile[f.Path] = nodes
 		}
 		if len(edges) > 0 {
 			edgesByFile[f.Path] = edges
+		}
+		if len(sinks) > 0 {
+			sinksByFile[f.Path] = sinks
 		}
 	}
 
@@ -78,16 +83,18 @@ func BuildGraph(projectPath string, files []types.FileEntry) (*Graph, error) {
 	graph.BuildIndexes()
 	graph.buildTrie()
 
-	// Phase 2: Resolve edge targets.
-	// Raw edges have callee names in the To field; resolve to node IDs.
+	// Phase 2: Resolve edge targets and collect sinks.
 	for _, edges := range edgesByFile {
 		for _, edge := range edges {
 			resolved := resolveEdge(edge, &graph.Graph)
 			graph.Edges = append(graph.Edges, resolved...)
 		}
 	}
+	for _, sinks := range sinksByFile {
+		graph.Sinks = append(graph.Sinks, sinks...)
+	}
 
-	// Rebuild indexes with edges included.
+	// Rebuild indexes with edges and sinks included.
 	graph.BuildIndexes()
 
 	// Save manifest.
@@ -176,17 +183,14 @@ func (g *Graph) Save(dir string) error {
 	}
 	f.Close()
 
-	// Edges only — loaded on demand for --callers/--callees.
+	// Edges — loaded on demand for --callers/--callees.
 	if len(g.Edges) > 0 {
-		ef, err := os.Create(filepath.Join(dir, "edges.gob"))
-		if err != nil {
-			return err
-		}
-		if err := gob.NewEncoder(ef).Encode(g.Edges); err != nil {
-			ef.Close()
-			return err
-		}
-		ef.Close()
+		saveGobFile(dir, "edges.gob", g.Edges)
+	}
+
+	// Sinks — external call analysis.
+	if len(g.Sinks) > 0 {
+		saveGobFile(dir, "sinks.gob", g.Sinks)
 	}
 
 	// Full JSON (debug / backward compat).
@@ -207,39 +211,51 @@ func LoadGraphNodes(dir string) (*Graph, error) {
 	return LoadGraph(dir)
 }
 
-// LoadGraph loads the full index including edges — for --callers/--callees queries.
+// LoadGraph loads the full index including edges and sinks — for call-graph queries.
 func LoadGraph(dir string) (*Graph, error) {
-	// Try split format (nodes.gob + edges.gob).
 	nodesPath := filepath.Join(dir, "nodes.gob")
-	edgesPath := filepath.Join(dir, "edges.gob")
 	if nodesData, err := os.ReadFile(nodesPath); err == nil {
 		graph, err := loadNodesGob(nodesData)
 		if err != nil {
 			return nil, err
 		}
 		// Attach edges if available.
-		if edgesData, eErr := os.ReadFile(edgesPath); eErr == nil {
+		if edgesData, eErr := os.ReadFile(filepath.Join(dir, "edges.gob")); eErr == nil {
 			var edges []types.Edge
 			if err := gob.NewDecoder(bytes.NewReader(edgesData)).Decode(&edges); err == nil {
 				graph.Edges = edges
-				graph.BuildIndexes() // rebuild with edges
 			}
 		}
+		// Attach sinks if available.
+		if sinksData, sErr := os.ReadFile(filepath.Join(dir, "sinks.gob")); sErr == nil {
+			var sinks []types.Sink
+			if err := gob.NewDecoder(bytes.NewReader(sinksData)).Decode(&sinks); err == nil {
+				graph.Sinks = sinks
+			}
+		}
+		graph.BuildIndexes()
 		return graph, nil
 	}
 
-	// Fall back to legacy full graph.gob.
+	// Fall backs.
 	gobPath := filepath.Join(dir, "graph.gob")
 	if data, err := os.ReadFile(gobPath); err == nil {
 		return loadFullGob(data)
 	}
-
-	// Last resort: JSON.
 	data, err := os.ReadFile(filepath.Join(dir, "graph.json"))
 	if err != nil {
 		return nil, err
 	}
 	return loadJSON(data)
+}
+
+func saveGobFile(dir, name string, data interface{}) error {
+	f, err := os.Create(filepath.Join(dir, name))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return gob.NewEncoder(f).Encode(data)
 }
 
 func loadNodesGob(data []byte) (*Graph, error) {
@@ -572,4 +588,75 @@ func ReadLines(absPath string, start, end int) ([]string, error) {
 		result = append(result, strings.TrimSpace(lines[i]))
 	}
 	return result, nil
+}
+
+// =============================================================================
+// Annotation persistence (agent-writable metadata layer)
+// =============================================================================
+
+// LoadAnnotations reads annotations from disk.
+func LoadAnnotations(dir string) ([]types.Annotation, error) {
+	path := filepath.Join(dir, "annotations.gob")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var anns []types.Annotation
+	if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&anns); err != nil {
+		return nil, err
+	}
+	return anns, nil
+}
+
+// SaveAnnotations writes annotations to disk.
+func SaveAnnotations(dir string, anns []types.Annotation) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	f, err := os.Create(filepath.Join(dir, "annotations.gob"))
+	if err != nil {
+		return err
+	}
+	if err := gob.NewEncoder(f).Encode(anns); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// =============================================================================
+// Sink and Reachable query helpers
+// =============================================================================
+
+// SinkGroup summarizes sinks by package name.
+type SinkGroup struct {
+	Pkg   string
+	Count int
+	Sinks []types.Sink
+}
+
+// GroupSinksByPkg groups sinks by package name.
+func (g *Graph) GroupSinksByPkg() []SinkGroup {
+	byPkg := make(map[string][]types.Sink)
+	for _, s := range g.Sinks {
+		byPkg[s.Pkg] = append(byPkg[s.Pkg], s)
+	}
+	var groups []SinkGroup
+	for pkg, sinks := range byPkg {
+		groups = append(groups, SinkGroup{Pkg: pkg, Count: len(sinks), Sinks: sinks})
+	}
+	return groups
+}
+
+// SinksForNodeID returns all sinks originating from a given node ID.
+func (g *Graph) SinksForNodeID(nodeID string) []types.Sink {
+	return g.Graph.SinksForNode(nodeID)
+}
+
+// ReachableFrom finds all paths from fromID to sinks matching pkgPattern.
+func (g *Graph) ReachableFrom(fromID, pkgPattern string, maxDepth int) [][]string {
+	return g.Graph.Reachable(fromID, pkgPattern, maxDepth)
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/yifanmeng/codefuse/internal/index"
 	"github.com/yifanmeng/codefuse/internal/parser"
 	"github.com/yifanmeng/codefuse/internal/scanner"
+	"github.com/yifanmeng/codefuse/pkg/types"
 )
 
 // =============================================================================
@@ -265,6 +266,108 @@ func runWatch(project string) error {
 	fmt.Printf("Watching %s for changes...\n", absPath)
 	fmt.Println("Press Ctrl+C to stop.")
 	return w.Watch()
+}
+
+// =============================================================================
+// Sinks
+// =============================================================================
+
+func runSinks(project, nodeName, pkg string) error {
+	absPath, err := filepath.Abs(project)
+	if err != nil {
+		return err
+	}
+	indexDir := filepath.Join(absPath, ".codefuse")
+	graph, err := index.LoadGraph(indexDir)
+	if err != nil {
+		return fmt.Errorf("no index found: %w", err)
+	}
+
+	if nodeName != "" {
+		results := graph.Query(nodeName, true)
+		if len(results) == 0 {
+			fmt.Printf("No symbol found matching '%s'\n", nodeName)
+			return nil
+		}
+		for _, node := range results {
+			sinks := graph.SinksForNodeID(node.ID)
+			if pkg != "" {
+				var filtered []types.Sink
+				for _, s := range sinks {
+					if strings.EqualFold(s.Pkg, pkg) || strings.Contains(strings.ToLower(s.CalleeName), strings.ToLower(pkg)) {
+						filtered = append(filtered, s)
+					}
+				}
+				sinks = filtered
+			}
+			if len(sinks) == 0 {
+				continue
+			}
+			fmt.Printf("%s (%s:%d) → %d external calls:\n", node.Name, node.File, node.Line, len(sinks))
+			for _, s := range sinks {
+				fmt.Printf("  [%s] %s @ %s:%d\n", s.Pkg, s.CalleeName, s.File, s.Line)
+			}
+		}
+		return nil
+	}
+
+	groups := graph.GroupSinksByPkg()
+	fmt.Printf("External sinks (%d total):\n\n", len(graph.Sinks))
+	for _, g := range groups {
+		if pkg != "" && !strings.EqualFold(g.Pkg, pkg) && !strings.Contains(strings.ToLower(g.Pkg), strings.ToLower(pkg)) {
+			continue
+		}
+		fmt.Printf("[%s] %d calls\n", g.Pkg, g.Count)
+		for _, s := range g.Sinks {
+			caller := graph.FindNodeByID(s.From)
+			if caller != nil {
+				fmt.Printf("  %s → %s @ %s:%d\n", caller.Name, s.CalleeName, s.File, s.Line)
+			}
+		}
+	}
+	return nil
+}
+
+func runReachable(project, fromName, pkgPattern string) error {
+	absPath, err := filepath.Abs(project)
+	if err != nil {
+		return err
+	}
+	indexDir := filepath.Join(absPath, ".codefuse")
+	graph, err := index.LoadGraph(indexDir)
+	if err != nil {
+		return fmt.Errorf("no index found: %w", err)
+	}
+
+	results := graph.Query(fromName, true)
+	if len(results) == 0 {
+		fmt.Printf("No symbol found matching '%s'\n", fromName)
+		return nil
+	}
+
+	for _, node := range results {
+		paths := graph.ReachableFrom(node.ID, pkgPattern, 10)
+		if len(paths) == 0 {
+			fmt.Printf("%s → no path to [%s]\n", node.Name, pkgPattern)
+			continue
+		}
+		fmt.Printf("%s → %d path(s) to [%s]:\n", node.Name, len(paths), pkgPattern)
+		for _, path := range paths {
+			fmt.Print("  ")
+			for j, id := range path {
+				if j > 0 {
+					fmt.Print(" → ")
+				}
+				if n := graph.FindNodeByID(id); n != nil {
+					fmt.Print(n.Name)
+				} else {
+					fmt.Print(id)
+				}
+			}
+			fmt.Println()
+		}
+	}
+	return nil
 }
 
 // =============================================================================

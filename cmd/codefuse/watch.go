@@ -145,20 +145,21 @@ func (fw *fileWatcher) reindexFile(absPath string) {
 		return
 	}
 
-	nodes, edges, err := parser.ExtractFile(absPath, relPath, lang)
+	nodes, edges, sinks, err := parser.ExtractFile(absPath, relPath, lang)
 	if err != nil || len(nodes) == 0 {
 		return
 	}
 
-	// Remove old nodes and edges for this file.
+	// Remove old nodes, edges, and sinks for this file.
 	fw.removeFileNodes(relPath)
 
-	// Add new nodes and edges.
+	// Add new nodes, edges, and sinks.
 	fw.graph.Nodes = append(fw.graph.Nodes, nodes...)
 	for _, edge := range edges {
 		resolved := resolveEdgeToGraph(edge, &fw.graph.Graph)
 		fw.graph.Edges = append(fw.graph.Edges, resolved...)
 	}
+	fw.graph.Sinks = append(fw.graph.Sinks, sinks...)
 
 	// Rebuild indexes.
 	fw.graph.BuildIndexes()
@@ -167,7 +168,7 @@ func (fw *fileWatcher) reindexFile(absPath string) {
 	// Save.
 	_ = fw.graph.Save(fw.indexDir)
 
-	fmt.Fprintf(os.Stderr, "  updated %s (%d symbols)\n", relPath, len(nodes))
+	fmt.Fprintf(os.Stderr, "  updated %s (%d symbols, %d sinks)\n", relPath, len(nodes), len(sinks))
 }
 
 func (fw *fileWatcher) removeFileNodes(relPath string) {
@@ -186,6 +187,14 @@ func (fw *fileWatcher) removeFileNodes(relPath string) {
 		}
 	}
 	fw.graph.Edges = keptEdges
+
+	var keptSinks []types.Sink
+	for _, s := range fw.graph.Sinks {
+		if s.File != relPath {
+			keptSinks = append(keptSinks, s)
+		}
+	}
+	fw.graph.Sinks = keptSinks
 }
 
 func (fw *fileWatcher) periodicRebuild() {

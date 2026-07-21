@@ -31,12 +31,11 @@ func TreeSitterAvailable() bool {
 // Unified extraction entry points
 // =============================================================================
 
-// ExtractFile parses a single source file and extracts thin symbol nodes.
-// Returns (nodes, edges, error). On tree-sitter failure, returns empty slices.
-func ExtractFile(absPath, relPath, language string) ([]types.Node, []types.Edge, error) {
+// ExtractFile parses a single source file and extracts thin symbol nodes, edges, and sinks.
+func ExtractFile(absPath, relPath, language string) ([]types.Node, []types.Edge, []types.Sink, error) {
 	cfg := config.Builtin[language]
 	if !TreeSitterAvailable() {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	cmd := exec.Command("tree-sitter", "parse", "--xml", absPath)
@@ -44,25 +43,23 @@ func ExtractFile(absPath, relPath, language string) ([]types.Node, []types.Edge,
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, nil, nil // tree-sitter fails → return empty, caller falls back
+		return nil, nil, nil, nil
 	}
 
 	return parseXML(out.Bytes(), relPath, &cfg)
 }
 
 // ExtractBatch parses multiple files in one tree-sitter invocation.
-// Files are grouped by language; tree-sitter is invoked per chunk (up to 500 files).
-// Returns (filePath → nodes, filePath → edges, failed files).
-func ExtractBatch(files []types.FileEntry) (map[string][]types.Node, map[string][]types.Edge, []types.FileEntry) {
+func ExtractBatch(files []types.FileEntry) (map[string][]types.Node, map[string][]types.Edge, map[string][]types.Sink, []types.FileEntry) {
 	if !TreeSitterAvailable() {
-		return nil, nil, files
+		return nil, nil, nil, files
 	}
 
 	nodesResult := make(map[string][]types.Node)
 	edgesResult := make(map[string][]types.Edge)
+	sinksResult := make(map[string][]types.Sink)
 	var failed []types.FileEntry
 
-	// Group files by language.
 	byLang := make(map[string][]types.FileEntry)
 	for _, f := range files {
 		byLang[f.Language] = append(byLang[f.Language], f)
@@ -82,25 +79,28 @@ func ExtractBatch(files []types.FileEntry) (map[string][]types.Node, map[string]
 				end = len(group)
 			}
 			chunk := group[i:end]
-			nodesMap, edgesMap, chunkFailed := parseChunk(chunk, &cfg)
+			nodesMap, edgesMap, sinksMap, chunkFailed := parseChunk(chunk, &cfg)
 			for path, nodes := range nodesMap {
 				nodesResult[path] = nodes
 			}
 			for path, e := range edgesMap {
 				edgesResult[path] = e
 			}
+			for path, s := range sinksMap {
+				sinksResult[path] = s
+			}
 			failed = append(failed, chunkFailed...)
 		}
 	}
 
-	return nodesResult, edgesResult, failed
+	return nodesResult, edgesResult, sinksResult, failed
 }
 
 // parseChunk runs tree-sitter on a batch of files (via --paths flag).
-func parseChunk(files []types.FileEntry, cfg *config.LangConfig) (map[string][]types.Node, map[string][]types.Edge, []types.FileEntry) {
+func parseChunk(files []types.FileEntry, cfg *config.LangConfig) (map[string][]types.Node, map[string][]types.Edge, map[string][]types.Sink, []types.FileEntry) {
 	tmpDir, err := os.MkdirTemp("", "codefuse-ts-*")
 	if err != nil {
-		return nil, nil, files
+		return nil, nil, nil, files
 	}
 	defer os.RemoveAll(tmpDir)
 
@@ -111,7 +111,7 @@ func parseChunk(files []types.FileEntry, cfg *config.LangConfig) (map[string][]t
 		sb.WriteByte('\n')
 	}
 	if err := os.WriteFile(pathsFile, []byte(sb.String()), 0644); err != nil {
-		return nil, nil, files
+		return nil, nil, nil, files
 	}
 
 	cmd := exec.Command("tree-sitter", "parse", "--paths", pathsFile, "--xml")
@@ -119,7 +119,7 @@ func parseChunk(files []types.FileEntry, cfg *config.LangConfig) (map[string][]t
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, nil, files // all files in chunk failed
+		return nil, nil, nil, files
 	}
 
 	return parseBatchXML(out.Bytes(), files, cfg)
@@ -155,31 +155,32 @@ type tsNode struct {
 // XML parsing
 // =============================================================================
 
-func parseXML(data []byte, relPath string, cfg *config.LangConfig) ([]types.Node, []types.Edge, error) {
+func parseXML(data []byte, relPath string, cfg *config.LangConfig) ([]types.Node, []types.Edge, []types.Sink, error) {
 	var doc struct {
 		Sources []tsSource `xml:"source"`
 	}
 	if err := xml.Unmarshal(data, &doc); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if len(doc.Sources) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	var nodes []types.Node
 	var edges []types.Edge
+	var sinks []types.Sink
 	for _, node := range doc.Sources[0].Nodes {
-		extractFromTree(&nodes, &edges, node, relPath, "", cfg)
+		extractFromTree(&nodes, &edges, &sinks, node, relPath, "", cfg)
 	}
-	return nodes, edges, nil
+	return nodes, edges, sinks, nil
 }
 
-func parseBatchXML(data []byte, files []types.FileEntry, cfg *config.LangConfig) (map[string][]types.Node, map[string][]types.Edge, []types.FileEntry) {
+func parseBatchXML(data []byte, files []types.FileEntry, cfg *config.LangConfig) (map[string][]types.Node, map[string][]types.Edge, map[string][]types.Sink, []types.FileEntry) {
 	var doc struct {
 		Sources []tsSource `xml:"source"`
 	}
 	if err := xml.Unmarshal(data, &doc); err != nil {
-		return nil, nil, files
+		return nil, nil, nil, files
 	}
 
 	absToRel := make(map[string]types.FileEntry, len(files))
@@ -189,6 +190,7 @@ func parseBatchXML(data []byte, files []types.FileEntry, cfg *config.LangConfig)
 
 	nodesResult := make(map[string][]types.Node)
 	edgesResult := make(map[string][]types.Edge)
+	sinksResult := make(map[string][]types.Sink)
 
 	for _, src := range doc.Sources {
 		f, ok := absToRel[src.Name]
@@ -197,14 +199,16 @@ func parseBatchXML(data []byte, files []types.FileEntry, cfg *config.LangConfig)
 		}
 		var nodes []types.Node
 		var edges []types.Edge
+		var sinks []types.Sink
 		for _, node := range src.Nodes {
-			extractFromTree(&nodes, &edges, node, f.Path, "", cfg)
+			extractFromTree(&nodes, &edges, &sinks, node, f.Path, "", cfg)
 		}
 		nodesResult[f.Path] = nodes
 		edgesResult[f.Path] = edges
+		sinksResult[f.Path] = sinks
 	}
 
-	return nodesResult, edgesResult, nil
+	return nodesResult, edgesResult, sinksResult, nil
 }
 
 // =============================================================================
@@ -220,6 +224,7 @@ func parseBatchXML(data []byte, files []types.FileEntry, cfg *config.LangConfig)
 func extractFromTree(
 	nodes *[]types.Node,
 	edges *[]types.Edge,
+	sinks *[]types.Sink,
 	node tsNode,
 	relPath string,
 	enclosingFunc string,
@@ -246,28 +251,49 @@ func extractFromTree(
 		}
 	}
 
-	// 2. Call-site node inside a function body → extract edge.
-	if isCallNode(nodeType, cfg) && enclosingFunc != "" {
+	// 2. Call-site node → extract edge (if inside a function) or sink (always).
+	if isCallNode(nodeType, cfg) {
 		if calleeName := extractCallee(node, cfg.CalleeTags); calleeName != "" {
-			callerID := findNodeInList(*nodes, enclosingFunc, relPath)
-			// Edge uses callee name (not ID) — resolved at query time against the graph.
-			// We store callee name in the To field; the graph builder resolves it.
-			if callerID != "" {
-				*edges = append(*edges, types.Edge{
-					From: callerID,
-					To:   calleeName, // will be resolved by graph builder
-					Kind: types.EdgeKindCalls,
-					File: relPath,
-					Line: node.SRow + 1,
+			// Dotted calls (pkg.Func, obj.Method) → always recorded as Sinks.
+			// Sinks capture external call sites regardless of enclosing function.
+			if isExternalCall(calleeName) {
+				// Try to find the enclosing function for attribution.
+				callerID := ""
+				if enclosingFunc != "" {
+					callerID = findNodeInList(*nodes, enclosingFunc, relPath)
+				}
+				*sinks = append(*sinks, types.Sink{
+					From:       callerID,
+					CalleeName: calleeName,
+					Pkg:        types.ExtractPkg(calleeName),
+					File:       relPath,
+					Line:       node.SRow + 1,
 				})
+			} else if enclosingFunc != "" {
+				// Simple name inside a function → internal edge, resolved later.
+				if callerID := findNodeInList(*nodes, enclosingFunc, relPath); callerID != "" {
+					*edges = append(*edges, types.Edge{
+						From: callerID,
+						To:   calleeName,
+						Kind: types.EdgeKindCalls,
+						File: relPath,
+						Line: node.SRow + 1,
+					})
+				}
 			}
 		}
 	}
 
 	// Recurse into children.
 	for _, child := range node.Nodes {
-		extractFromTree(nodes, edges, child, relPath, enclosingFunc, cfg)
+		extractFromTree(nodes, edges, sinks, child, relPath, enclosingFunc, cfg)
 	}
+}
+
+// isExternalCall returns true if the callee looks like an external call (pkg.Func or obj.Method).
+// Simple names like "foo()" without dots are assumed to be internal.
+func isExternalCall(callee string) bool {
+	return strings.ContainsRune(callee, '.')
 }
 
 // =============================================================================
@@ -348,12 +374,12 @@ func extractName(node tsNode, nameTags []string) string {
 }
 
 // extractCallee extracts the callee name from a call-site node.
+// For dotted calls (obj.method, pkg.Func), returns the full dotted name.
 func extractCallee(node tsNode, calleeTags []string) string {
 	if calleeTags == nil {
 		calleeTags = config.DefaultCalleeTags
 	}
 
-	// Direct: <identifier name="foo"/>
 	for _, child := range node.Nodes {
 		if isNameTag(child.XMLName.Local, calleeTags) {
 			if child.Name != "" {
@@ -363,13 +389,24 @@ func extractCallee(node tsNode, calleeTags []string) string {
 				return text
 			}
 		}
-		// member_expression: obj.method() → return method name
+		// member_expression (JS/TS): obj.method()
 		if child.XMLName.Local == "member_expression" || child.XMLName.Local == "field_expression" {
+			// Try to get full dotted name: obj.method
+			if full := extractDottedName(child); full != "" {
+				return full
+			}
 			if name := extractName(child, calleeTags); name != "" {
 				return name
 			}
 		}
-		// scoped_identifier: std::foo::bar() → return last segment
+		// attribute (Python): obj.method, pkg.func
+		// Tree-sitter: <attribute><identifier field="object">X</identifier>.<identifier field="attribute">Y</identifier></attribute>
+		if child.XMLName.Local == "attribute" || child.XMLName.Local == "field_access" {
+			if full := extractDottedName(child); full != "" {
+				return full
+			}
+		}
+		// scoped_identifier (Rust): std::foo::bar()
 		if child.XMLName.Local == "scoped_identifier" {
 			if name := extractName(child, calleeTags); name != "" {
 				return name
@@ -377,6 +414,44 @@ func extractCallee(node tsNode, calleeTags []string) string {
 		}
 	}
 
+	return ""
+}
+
+// extractDottedName reconstructs a dotted name from a qualified node like:
+//   <attribute> → "obj.method"
+//   <member_expression> → "obj.method"
+func extractDottedName(node tsNode) string {
+	var object, attribute string
+	for _, child := range node.Nodes {
+		switch child.XMLName.Local {
+		case "identifier":
+			if child.Name != "" {
+				if object == "" {
+					object = child.Name
+				} else {
+					attribute = child.Name
+				}
+			} else if text := strings.TrimSpace(child.Chardata); text != "" {
+				if object == "" {
+					object = text
+				} else {
+					attribute = text
+				}
+			}
+		default:
+			// Recurse for nested attributes
+			if result := extractDottedName(child); result != "" {
+				if object == "" {
+					object = result
+				} else {
+					attribute = result
+				}
+			}
+		}
+	}
+	if object != "" && attribute != "" {
+		return object + "." + attribute
+	}
 	return ""
 }
 
