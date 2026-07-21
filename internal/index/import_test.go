@@ -107,7 +107,7 @@ func TestResolveEdge_CrossFile_WithImport(t *testing.T) {
 		Line: 11,
 	}
 
-	resolved := resolveEdgeWithImports(edge, imports, modMap, &g.Graph)
+	resolved := resolveEdgeWithTypes(edge, imports, nil, modMap, &g.Graph)
 	// Should find findById in db/UserDao.java
 	assert.True(t, len(resolved) > 0, "should resolve cross-file edge via import")
 	assert.Equal(t, "db/UserDao.java:15:1", resolved[0].To)
@@ -137,7 +137,7 @@ func TestResolveEdge_SameFile_WinsOverImport(t *testing.T) {
 		Line: 11,
 	}
 
-	resolved := resolveEdgeWithImports(edge, imports, nil, &g.Graph)
+	resolved := resolveEdgeWithTypes(edge, imports, nil, nil, &g.Graph)
 	// Same-file "encrypt" at a.go:10:1 should win over import-to-b.go.
 	assert.Len(t, resolved, 1)
 	assert.Equal(t, "a.go:10:1", resolved[0].To)

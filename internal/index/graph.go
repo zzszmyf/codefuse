@@ -106,11 +106,25 @@ func BuildGraph(projectPath string, files []types.FileEntry) (*Graph, error) {
 		}
 	}
 
-	// Phase 2: Resolve edge targets (now with imports) and collect sinks.
+	// Phase 2: Extract VarMaps for type inference.
+	varMapsPerFile := make(map[string]map[string]string)
+	for _, f := range files {
+		content, err := os.ReadFile(f.AbsPath)
+		if err != nil {
+			continue
+		}
+		vm := parser.ExtractVarMap(string(content), f.Language)
+		if len(vm) > 0 {
+			varMapsPerFile[f.Path] = vm
+		}
+	}
+
+	// Phase 3: Resolve edge targets (imports + type inference) and collect sinks.
 	for filePath, edges := range edgesByFile {
 		imports := graph.Imports[filePath]
+		varMap := varMapsPerFile[filePath]
 		for _, edge := range edges {
-			resolved := resolveEdgeWithImports(edge, imports, graph.ModMap, &graph.Graph)
+			resolved := resolveEdgeWithTypes(edge, imports, varMap, graph.ModMap, &graph.Graph)
 			graph.Edges = append(graph.Edges, resolved...)
 		}
 	}
@@ -723,9 +737,15 @@ func BuildModuleMap(nodes []types.Node, projectPath string) types.ModuleMap {
 	return mm
 }
 
-// resolveEdgeWithImports resolves a raw callee name to node IDs using same-file
-// matching first, then import-based cross-file matching.
-func resolveEdgeWithImports(edge types.Edge, fileImports []types.FileImport, modMap types.ModuleMap, g *types.Graph) []types.Edge {
+// resolveEdgeWithTypes resolves a callee name to node IDs using:
+// 1. Same-file matching
+// 2. Type inference: dao.findById → varMap["dao"]="UserDao" → import "UserDao" → target file
+// 3. Direct import matching
+func resolveEdgeWithTypes(edge types.Edge, fileImports []types.FileImport, varMap map[string]string, modMap types.ModuleMap, g *types.Graph) []types.Edge {
+	return resolveEdgeWithImportsAndTypes(edge, fileImports, varMap, modMap, g)
+}
+
+func resolveEdgeWithImportsAndTypes(edge types.Edge, fileImports []types.FileImport, varMap map[string]string, modMap types.ModuleMap, g *types.Graph) []types.Edge {
 	calleeName := edge.To
 	callerFile := edge.File
 
@@ -737,9 +757,15 @@ func resolveEdgeWithImports(edge types.Edge, fileImports []types.FileImport, mod
 		return stampCaller(result, edge.From)
 	}
 
-	// Strategy 2: Dotted call → resolve object via imports → find method in target file.
+	// Strategy 2: Dotted call → resolve via imports, with type inference fallback.
 	if objName != "" && methodName != "" {
 		targetFile := resolveImport(objName, fileImports, modMap)
+		// Type inference: dao.findById → varMap["dao"]="UserDao" → import "UserDao".
+		if targetFile == "" && varMap != nil {
+			if typeName, ok := varMap[objName]; ok {
+				targetFile = resolveImport(typeName, fileImports, modMap)
+			}
+		}
 		if targetFile != "" {
 			if result := matchInFile(g, methodName, targetFile); len(result) > 0 {
 				return stampCaller(result, edge.From)

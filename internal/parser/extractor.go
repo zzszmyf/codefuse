@@ -658,8 +658,62 @@ func parseRustImportLine(line, relPath string, imports *[]types.FileImport, modM
 }
 
 // moduleToPath converts a dotted module name to a file path.
-// "db.user_dao" → "db/user_dao.py" (extension added by caller)
 func moduleToPath(dotted, ext string) string {
 	return strings.ReplaceAll(dotted, ".", "/") + ext
+}
+
+// =============================================================================
+// VarMap — variable→type inference for cross-file edge resolution.
+// Regex-based, no extra tree-sitter invocation.
+// =============================================================================
+
+var (
+	pyAssignPat   = regexp.MustCompile(`(\w+)\s*=\s*(\w+)\(`)
+	pyParamPat    = regexp.MustCompile(`(\w+)\s*:\s*(\w+)`)
+	pyGenericPat  = regexp.MustCompile(`(\w+)\s*:\s*(?:List|Optional|Dict)\[(\w+)`)
+	javaVarDeclPat = regexp.MustCompile(`(\w+)\s+(\w+)\s*=`)
+	javaGenericPat = regexp.MustCompile(`(?:List|Optional|Map)<(\w+)>\s+(\w+)`)
+)
+
+// ExtractVarMap extracts variable→type mappings from source code.
+func ExtractVarMap(content, language string) map[string]string {
+	vm := make(map[string]string)
+	scanner := bufio.NewScanner(strings.NewReader(content))
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+			continue
+		}
+
+		switch language {
+		case "python":
+			// x = Foo() → {"x": "Foo"}
+			if m := pyAssignPat.FindStringSubmatch(line); m != nil {
+				vm[m[1]] = m[2]
+				continue
+			}
+			// def f(x: Foo): → {"x": "Foo"}
+			if m := pyParamPat.FindStringSubmatch(line); m != nil {
+				vm[m[1]] = m[2]
+				continue
+			}
+			// x: List[Foo] = → {"x": "Foo"}
+			if m := pyGenericPat.FindStringSubmatch(line); m != nil {
+				vm[m[1]] = m[2]
+			}
+		case "java":
+			// Foo x = new Foo() → {"x": "Foo"}
+			if m := javaVarDeclPat.FindStringSubmatch(line); m != nil {
+				vm[m[2]] = m[1]
+				continue
+			}
+			// List<Foo> x = → {"x": "Foo"}
+			if m := javaGenericPat.FindStringSubmatch(line); m != nil {
+				vm[m[2]] = m[1]
+			}
+		}
+	}
+	return vm
 }
 
