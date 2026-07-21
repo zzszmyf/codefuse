@@ -10,15 +10,25 @@
 package parser
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/xml"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/yifanmeng/codefuse/pkg/config"
 	"github.com/yifanmeng/codefuse/pkg/types"
+)
+
+// Import patterns per language.
+var (
+	pyFromPat   = regexp.MustCompile(`^from\s+([\w.]+)\s+import\s+(.+)`)
+	pyImportPat = regexp.MustCompile(`^import\s+([\w.]+)(?:\s+as\s+(\w+))?`)
+	javaImportPat = regexp.MustCompile(`^import\s+(static\s+)?([\w.]+)(?:\.(\*|\w+))?\s*;`)
+	goImportPat   = regexp.MustCompile(`"([^"]+)"`)
 )
 
 // TreeSitterAvailable reports whether the tree-sitter CLI is installed.
@@ -482,3 +492,174 @@ func findNodeInList(nodes []types.Node, name, file string) string {
 func BuiltinConfig() map[string]config.LangConfig {
 	return config.Builtin
 }
+
+// =============================================================================
+// Import parsing — language-aware, regex-based.
+// =============================================================================
+
+// ParseImports extracts import mappings from a source file.
+// Returns (file-level imports, updated module map).
+// The module map maps dotted module names → file paths.
+func ParseImports(content, relPath, language string) ([]types.FileImport, types.ModuleMap) {
+	var imports []types.FileImport
+	modMap := make(types.ModuleMap)
+
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		trimmed := strings.TrimSpace(scanner.Text())
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+
+		switch language {
+		case "python":
+			parsePythonImportLine(trimmed, relPath, &imports, modMap)
+		case "java":
+			parseJavaImportLine(trimmed, relPath, &imports, modMap)
+		case "go":
+			parseGoImportLine(trimmed, relPath, &imports, modMap)
+		case "rust":
+			parseRustImportLine(trimmed, relPath, &imports, modMap)
+		}
+	}
+
+	return imports, modMap
+}
+
+func parsePythonImportLine(line, relPath string, imports *[]types.FileImport, modMap types.ModuleMap) {
+	// from X import Y, Z as W
+	if m := pyFromPat.FindStringSubmatch(line); m != nil {
+		module := m[1]                  // e.g. "db.user_dao"
+		targetFile := moduleToPath(module, ".py")
+		modMap[module] = targetFile
+
+		items := strings.Split(m[2], ",")
+		for _, item := range items {
+			item = strings.TrimSpace(item)
+			if item == "*" || item == "" {
+				continue
+			}
+			parts := strings.SplitN(item, " as ", 2)
+			if len(parts) == 2 {
+				*imports = append(*imports, types.FileImport{
+					ShortName: strings.TrimSpace(parts[0]), // original: "decrypt"
+					FullPath:  targetFile,
+					Alias:     strings.TrimSpace(parts[1]), // alias: "dec"
+				})
+			} else {
+				*imports = append(*imports, types.FileImport{
+					ShortName: item,
+					FullPath:  targetFile,
+				})
+			}
+		}
+		return
+	}
+
+	// import X or import X as Y
+	if m := pyImportPat.FindStringSubmatch(line); m != nil {
+		module := m[1]
+		modMap[module] = moduleToPath(module, ".py")
+		if m[2] != "" {
+			*imports = append(*imports, types.FileImport{
+				ShortName: m[2],
+				FullPath:  moduleToPath(module, ".py"),
+				Alias:     module,
+			})
+		}
+	}
+}
+
+func parseJavaImportLine(line, relPath string, imports *[]types.FileImport, modMap types.ModuleMap) {
+	// import com.foo.UserDao → dotted="com.foo.UserDao", suffix="UserDao"
+	// import java.util.*     → dotted="java.util", suffix="*"
+	dotted := extractJavaImport(line)
+	if dotted == "" {
+		return
+	}
+
+	// Split by last dot to get package vs class name.
+	lastDot := strings.LastIndex(dotted, ".")
+	if lastDot < 0 {
+		return
+	}
+	suffix := dotted[lastDot+1:]
+	pkg := dotted[:lastDot]
+
+	if suffix == "*" {
+		modMap[dotted] = strings.ReplaceAll(pkg, ".", "/") + "/"
+	} else {
+		targetFile := strings.ReplaceAll(dotted, ".", "/") + ".java"
+		modMap[dotted] = targetFile
+		*imports = append(*imports, types.FileImport{
+			ShortName: suffix,
+			FullPath:  targetFile,
+		})
+	}
+	_ = relPath
+}
+
+func extractJavaImport(line string) string {
+	// Match: import [static] com.foo.UserDao;
+	line = strings.TrimPrefix(line, "import ")
+	line = strings.TrimPrefix(line, "static ")
+	line = strings.TrimSuffix(line, ";")
+	return strings.TrimSpace(line)
+}
+
+func parseGoImportLine(line, relPath string, imports *[]types.FileImport, modMap types.ModuleMap) {
+	matches := goImportPat.FindAllStringSubmatch(line, -1)
+	for _, m := range matches {
+		pkgPath := m[1]
+		parts := strings.Split(pkgPath, "/")
+		pkgName := parts[len(parts)-1]
+		// External packages (github.com/..., golang.org/...) don't get trailing /.
+		if strings.Contains(pkgPath, ".") {
+			modMap[pkgName] = pkgPath
+		} else {
+			modMap[pkgName] = pkgPath + "/"
+		}
+		// Check for alias.
+		if idx := strings.LastIndex(line, pkgPath); idx > 0 {
+			prefix := strings.TrimSpace(line[:idx-1])
+			if prefix != "" && !strings.Contains(prefix, "\"") {
+				alias := strings.Fields(prefix)
+				if len(alias) > 0 {
+					modMap[alias[len(alias)-1]] = pkgPath
+				}
+			}
+		}
+	}
+	_ = imports
+	_ = relPath
+}
+
+func parseRustImportLine(line, relPath string, imports *[]types.FileImport, modMap types.ModuleMap) {
+	// use crate::db::UserDao;
+	// use std::collections::HashMap;
+	trimmed := strings.TrimPrefix(line, "use ")
+	if trimmed == line {
+		return
+	}
+	// Split by "::" and extract last segment as the imported name.
+	parts := strings.Split(trimmed, "::")
+	if len(parts) > 0 {
+		name := strings.TrimSuffix(strings.TrimSuffix(parts[len(parts)-1], ";"), "}")
+		cratePath := strings.Join(parts[:len(parts)-1], "/")
+		targetFile := cratePath + ".rs"
+		modMap[name] = targetFile
+		*imports = append(*imports, types.FileImport{
+			ShortName: name,
+			FullPath:  targetFile,
+		})
+	}
+	_ = relPath
+	_ = modMap
+}
+
+// moduleToPath converts a dotted module name to a file path.
+// "db.user_dao" → "db/user_dao.py" (extension added by caller)
+func moduleToPath(dotted, ext string) string {
+	return strings.ReplaceAll(dotted, ".", "/") + ext
+}
+

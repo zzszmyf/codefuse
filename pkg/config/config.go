@@ -8,11 +8,7 @@ package config
 
 // LangConfig defines how to extract symbols and call edges for a language.
 type LangConfig struct {
-	// Name is the language identifier (e.g., "go", "python").
-	Name string `json:"name"`
-
-	// Extensions maps file extensions to this language.
-	// e.g., [".go"], [".py"], [".java"], [".js", ".jsx"]
+	Name       string   `json:"name"`
 	Extensions []string `json:"extensions"`
 
 	// DeclNodes are tree-sitter node type names that represent symbol declarations.

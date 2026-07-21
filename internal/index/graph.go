@@ -24,6 +24,7 @@ func init() {
 	gob.Register(types.FileEntry{})
 	gob.Register(types.Sink{})
 	gob.Register(types.Annotation{})
+	gob.Register(types.FileImport{})
 }
 
 // Graph wraps types.Graph with a prefix trie for fast name lookup.
@@ -83,10 +84,33 @@ func BuildGraph(projectPath string, files []types.FileEntry) (*Graph, error) {
 	graph.BuildIndexes()
 	graph.buildTrie()
 
-	// Phase 2: Resolve edge targets and collect sinks.
-	for _, edges := range edgesByFile {
+	// Build module map from all nodes (project-level: dotted name → file).
+	graph.ModMap = BuildModuleMap(graph.Nodes, projectPath)
+	graph.Imports = make(map[string][]types.FileImport)
+
+	// Parse imports for each file (for cross-file edge resolution).
+	for _, f := range files {
+		content, err := os.ReadFile(f.AbsPath)
+		if err != nil {
+			continue
+		}
+		imports, modMap := parser.ParseImports(string(content), f.Path, f.Language)
+		if len(imports) > 0 {
+			graph.Imports[f.Path] = imports
+		}
+		// Merge file-level modMap into project-level.
+		for k, v := range modMap {
+			if _, ok := graph.ModMap[k]; !ok {
+				graph.ModMap[k] = v
+			}
+		}
+	}
+
+	// Phase 2: Resolve edge targets (now with imports) and collect sinks.
+	for filePath, edges := range edgesByFile {
+		imports := graph.Imports[filePath]
 		for _, edge := range edges {
-			resolved := resolveEdge(edge, &graph.Graph)
+			resolved := resolveEdgeWithImports(edge, imports, graph.ModMap, &graph.Graph)
 			graph.Edges = append(graph.Edges, resolved...)
 		}
 	}
@@ -659,4 +683,145 @@ func (g *Graph) SinksForNodeID(nodeID string) []types.Sink {
 // ReachableFrom finds all paths from fromID to sinks matching pkgPattern.
 func (g *Graph) ReachableFrom(fromID, pkgPattern string, maxDepth int) [][]string {
 	return g.Graph.Reachable(fromID, pkgPattern, maxDepth)
+}
+
+// =============================================================================
+// Import-based cross-file edge resolution
+// =============================================================================
+
+// BuildModuleMap builds a dotted-name → file-path map from all indexed nodes.
+// Python: "db.user_dao" → "db/user_dao.py"
+// Java: "com.foo.UserDao" → "com/foo/UserDao.java"
+func BuildModuleMap(nodes []types.Node, projectPath string) types.ModuleMap {
+	mm := make(types.ModuleMap)
+	for _, node := range nodes {
+		file := node.File
+		// Python: convert db/user_dao.py → db.user_dao
+		if strings.HasSuffix(file, ".py") {
+			mod := strings.TrimSuffix(file, ".py")
+			mod = strings.ReplaceAll(mod, "/", ".")
+			if strings.HasSuffix(mod, ".__init__") {
+				mod = strings.TrimSuffix(mod, ".__init__")
+			}
+			mm[mod] = file
+		}
+		// Java: convert com/foo/UserDao.java → com.foo.UserDao
+		if strings.HasSuffix(file, ".java") {
+			dotted := strings.TrimSuffix(file, ".java")
+			dotted = strings.ReplaceAll(dotted, "/", ".")
+			mm[dotted] = file
+		}
+		// Go/Rust/JS/TS: directory-based modules
+		dir := filepath.Dir(file)
+		if dir != "." {
+			pkg := filepath.Base(dir)
+			if _, ok := mm[pkg]; !ok {
+				mm[pkg] = dir + "/"
+			}
+		}
+	}
+	return mm
+}
+
+// resolveEdgeWithImports resolves a raw callee name to node IDs using same-file
+// matching first, then import-based cross-file matching.
+func resolveEdgeWithImports(edge types.Edge, fileImports []types.FileImport, modMap types.ModuleMap, g *types.Graph) []types.Edge {
+	calleeName := edge.To
+	callerFile := edge.File
+
+	// Parse dotted name: "userDao.findById" → obj="userDao", method="findById"
+	objName, methodName := splitDotted(calleeName)
+
+	// Strategy 1: Same-file match.
+	if result := matchSameFile(g, calleeName, callerFile); len(result) > 0 {
+		return stampCaller(result, edge.From)
+	}
+
+	// Strategy 2: Dotted call → resolve object via imports → find method in target file.
+	if objName != "" && methodName != "" {
+		targetFile := resolveImport(objName, fileImports, modMap)
+		if targetFile != "" {
+			if result := matchInFile(g, methodName, targetFile); len(result) > 0 {
+				return stampCaller(result, edge.From)
+			}
+		}
+	}
+
+	// Strategy 3: Simple name → try all explicit imports.
+	if objName == "" && methodName != "" {
+		for _, imp := range fileImports {
+			if result := matchInFile(g, methodName, imp.FullPath); len(result) > 0 {
+				return stampCaller(result, edge.From)
+			}
+		}
+	}
+
+	return nil
+}
+
+// stampCaller sets the From field on edges to the given caller ID.
+func stampCaller(edges []types.Edge, callerID string) []types.Edge {
+	for i := range edges {
+		edges[i].From = callerID
+	}
+	return edges
+}
+
+// splitDotted splits "userDao.findById" into ("userDao", "findById").
+func splitDotted(name string) (string, string) {
+	idx := strings.IndexRune(name, '.')
+	if idx < 0 {
+		return "", name
+	}
+	return name[:idx], name[idx+1:]
+}
+
+// resolveImport resolves an object name to a file path using imports.
+// Matching is case-insensitive (userDao → UserDao).
+func resolveImport(name string, fileImports []types.FileImport, modMap types.ModuleMap) string {
+	lower := strings.ToLower(name)
+	for _, imp := range fileImports {
+		if strings.ToLower(imp.ShortName) == lower || strings.ToLower(imp.Alias) == lower {
+			return imp.FullPath
+		}
+	}
+	// Try module map (case-insensitive).
+	for k, v := range modMap {
+		if strings.ToLower(k) == lower {
+			return v
+		}
+	}
+	return ""
+}
+
+// matchSameFile finds a callee by name in the caller's file.
+func matchSameFile(g *types.Graph, calleeName, callerFile string) []types.Edge {
+	candidates := g.FindNodeByName(calleeName)
+	if len(candidates) == 0 {
+		return nil
+	}
+	for _, callee := range candidates {
+		if callee.File == callerFile {
+			return []types.Edge{{
+				To:   callee.ID,
+				Kind: types.EdgeKindCalls,
+				File: callerFile,
+			}}
+		}
+	}
+	return nil
+}
+
+// matchInFile finds a node by name in a specific file.
+func matchInFile(g *types.Graph, name, targetFile string) []types.Edge {
+	candidates := g.FindNodeByName(name)
+	if len(candidates) == 0 {
+		return nil
+	}
+	for _, callee := range candidates {
+		if callee.File == targetFile {
+			return []types.Edge{{To: callee.ID, Kind: types.EdgeKindCalls, File: targetFile}}
+		}
+	}
+	return nil
 }

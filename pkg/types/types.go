@@ -37,6 +37,18 @@ type Edge struct {
 	Line int    `json:"line"`
 }
 
+// FileImport records a single import mapping from a file.
+// e.g., "from db.user_dao import UserDao" → {ShortName: "UserDao", FullPath: "db/user_dao.py"}
+type FileImport struct {
+	ShortName string `json:"short_name"` // "UserDao" or "" for wildcard imports
+	FullPath  string `json:"full_path"`  // target file/module path
+	Alias     string `json:"alias"`      // "dec" when "import X as dec"
+}
+
+// ModuleMap maps dotted module names to file paths.
+// e.g., "db.user_dao" → "db/user_dao.py", "com.foo.UserDao" → "com/foo/UserDao.java"
+type ModuleMap map[string]string
+
 // Sink is an unresolved external call — the callee is NOT in the index.
 // Pkg is extracted from the call expression (e.g. "sql.Query" → "sql").
 // Sinks enable answering "does method A call the DB?" without hardcoded
@@ -73,7 +85,9 @@ type Graph struct {
 	Files       []FileEntry `json:"files"`
 	Nodes       []Node      `json:"nodes"`
 	Edges       []Edge      `json:"edges"`
-	Sinks       []Sink      `json:"sinks"` // unresolved external calls
+	Sinks       []Sink      `json:"sinks"`               // unresolved external calls
+	Imports     map[string][]FileImport `json:"imports"`  // file path → its imports
+	ModMap      ModuleMap   `json:"mod_map"`              // dotted module → file path
 
 	// Runtime indexes (not serialized)
 	nodeByID    map[string]*Node   `json:"-"`
