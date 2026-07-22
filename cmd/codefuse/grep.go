@@ -37,24 +37,28 @@ type grepOptions struct {
 }
 
 // runGrepCompat is the grep-compatible entry point.
+
+// execGrepCmd is the grep execution function, replaceable for testing.
+var execGrepCmd = execRealGrep
+
 func runGrepCompat(args []string) error {
 	opts := parseGrepFlags(args)
 
 	// -t / --text: force text search, bypass index.
 	if opts.forceText {
-		return execRealGrep(opts)
+		return execGrepCmd(opts)
 	}
 
 	// Find project root and load index.
 	indexDir, projectPath := findIndexDir()
 	if indexDir == "" {
-		return execRealGrep(opts)
+		return execGrepCmd(opts)
 	}
 
 	// Load nodes only — grep queries don't need edges.
 	graph, err := index.LoadGraphNodes(indexDir)
 	if err != nil {
-		return execRealGrep(opts)
+		return execGrepCmd(opts)
 	}
 
 	// Query the thin index (pass ignoreCase for trie prefix search).
@@ -66,7 +70,7 @@ func runGrepCompat(args []string) error {
 			}
 			return nil
 		}
-		return execRealGrep(opts)
+		return execGrepCmd(opts)
 	}
 
 	// Resolve file paths to absolute for reading source.

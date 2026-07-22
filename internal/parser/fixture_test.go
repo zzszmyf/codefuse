@@ -1,9 +1,9 @@
 package parser
 
 import (
+	"encoding/xml"
 	"os"
 	"strings"
-	"encoding/xml"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -186,7 +186,7 @@ func TestExtractCallee_Dotted(t *testing.T) {
 func TestExtractCallee_Simple(t *testing.T) {
 	node := tsNode{
 		XMLName: xml.Name{Local: "call"},
-		Nodes:    []tsNode{{XMLName: xml.Name{Local: "identifier"}, Chardata: "foo"}},
+		Nodes:   []tsNode{{XMLName: xml.Name{Local: "identifier"}, Chardata: "foo"}},
 	}
 	callee := extractCallee(node, nil)
 	assert.Equal(t, "foo", callee)

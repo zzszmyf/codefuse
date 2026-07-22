@@ -97,7 +97,6 @@ func TestIntegration_ExtractFile_Empty(t *testing.T) {
 	assert.Empty(t, nodes, "empty file should produce no symbols")
 }
 
-
 func TestIntegration_ExtractBatch_Python(t *testing.T) {
 	requireTreeSitter(t)
 	tmpDir := t.TempDir()
@@ -114,7 +113,6 @@ func TestIntegration_ExtractBatch_Python(t *testing.T) {
 	_ = edgesByFile
 	_ = sinksByFile
 }
-
 
 // Helpers
 
