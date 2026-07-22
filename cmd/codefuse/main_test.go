@@ -84,6 +84,35 @@ func TestParseGrepFlags_CombinedShort(t *testing.T) {
 	assert.True(t, opts.filesOnly)
 }
 
+func TestParseGrepFlags_InvertQuiet(t *testing.T) {
+	opts := parseGrepFlags([]string{"-v", "-q", "pattern"})
+	assert.True(t, opts.invertMatch)
+	assert.True(t, opts.quiet)
+}
+
+func TestParseGrepFlags_OnlyMatching(t *testing.T) {
+	opts := parseGrepFlags([]string{"-o", "pattern"})
+	assert.True(t, opts.onlyMatching)
+}
+
+func TestParseGrepFlags_IncludeExclude(t *testing.T) {
+	opts := parseGrepFlags([]string{"--include=*.py", "--exclude=test_*", "pattern"})
+	assert.Contains(t, opts.include, "*.py")
+	assert.Contains(t, opts.exclude, "test_*")
+}
+
+func TestParseGrepFlags_MultiplePatterns(t *testing.T) {
+	opts := parseGrepFlags([]string{"-e", "pattern1", "-e", "pattern2"})
+	// Second -e overwrites pattern (grep behavior)
+	assert.Equal(t, "pattern2", opts.pattern)
+}
+
+func TestParseGrepFlags_PatternAndPath(t *testing.T) {
+	opts := parseGrepFlags([]string{"pattern", "src/", "tests/"})
+	assert.Equal(t, "pattern", opts.pattern)
+	assert.Equal(t, []string{"src/", "tests/"}, opts.paths)
+}
+
 func TestFindIndexDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	indexDir := filepath.Join(tmpDir, ".codefuse")

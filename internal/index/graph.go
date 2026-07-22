@@ -61,9 +61,15 @@ func BuildGraph(projectPath string, files []types.FileEntry) (*Graph, error) {
 	// Phase 1: Extract nodes, edges, and sinks via tree-sitter batch.
 	nodesByFile, edgesByFile, sinksByFile, failed := parser.ExtractBatch(files)
 
-	// For failed files, try individual extraction.
+	// For failed files, try individual extraction. Log failures to stderr.
+	if len(failed) > 0 {
+		fmt.Fprintf(os.Stderr, "codefuse: %d files failed batch extraction, retrying individually...\n", len(failed))
+	}
 	for _, f := range failed {
-		nodes, edges, sinks, _ := parser.ExtractFile(f.AbsPath, f.Path, f.Language)
+		nodes, edges, sinks, err := parser.ExtractFile(f.AbsPath, f.Path, f.Language)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "codefuse: parse error for %s: %v\n", f.Path, err)
+		}
 		if len(nodes) > 0 {
 			nodesByFile[f.Path] = nodes
 		}
@@ -72,6 +78,18 @@ func BuildGraph(projectPath string, files []types.FileEntry) (*Graph, error) {
 		}
 		if len(sinks) > 0 {
 			sinksByFile[f.Path] = sinks
+		}
+	}
+	if len(failed) > 0 {
+		recovered := len(failed)
+		for _, f := range failed {
+			if _, ok := nodesByFile[f.Path]; ok {
+				recovered--
+			}
+		}
+		if recovered > 0 {
+			fmt.Fprintf(os.Stderr, "codefuse: %d files could not be parsed (tree-sitter grammar missing?)\n", recovered)
+			fmt.Fprintf(os.Stderr, "codefuse: run 'codefuse setup treesitter --auto' to install grammars\n")
 		}
 	}
 

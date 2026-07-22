@@ -1,74 +1,54 @@
 # Contributing to CodeFuse
 
-Thank you for your interest in contributing! This document explains how to get started.
-
-## Development Setup
+## Setup
 
 ```bash
-# Requirements: Go 1.25+
 git clone https://github.com/zzszmyf/codefuse.git
 cd codefuse
-go mod download
+npm install -g tree-sitter-cli
+go run ./cmd/codefuse setup treesitter --auto
 go build ./cmd/codefuse
 ```
 
-## Running Tests
+## Workflow
 
 ```bash
-# All tests
-go test ./...
-
-# With race detector
-go test -race ./...
-
-# With coverage
-go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out
+make check       # format, vet, test
+make cover       # coverage report
+make build       # build binary
 ```
 
-## Code Style
+## Architecture
 
-- `go fmt` — all Go code must be formatted
-- `go vet ./...` — no vet warnings
-- Follow existing patterns in the codebase
+```
+cmd/codefuse/     CLI + MCP server
+pkg/config/       Language definitions (8 languages, 5 lines each)
+pkg/types/        Node, Edge, Sink, Annotation, Graph
+internal/scanner/ File system walker
+internal/parser/  tree-sitter XML parsing + import/varMap regex
+internal/index/   Graph builder, Trie, query engine
+```
 
-## Submitting Changes
+## Adding a language
 
-1. **Open an issue first** for significant changes (new features, API changes)
-2. **Fork and branch**: `git checkout -b feature/my-feature`
-3. **Write tests** for new functionality
-4. **Ensure CI passes**: `make test lint`
-5. **Commit message format**: use present tense, be specific
-   - Good: `feat: add glob pattern support to query command`
-   - Bad: `fixed stuff`
-6. **Open a Pull Request** with a clear description
+1. Add entry to `pkg/config/config.go` (declaration + call node types)
+2. Add grammar to `internal/parser/treesitter_setup.go`
+3. (Optional) Add import parse patterns to `extractor.go`
 
-## Pull Request Checklist
+Zero parser code. All languages share one extraction engine.
 
-- [ ] Tests pass (`go test ./...`)
-- [ ] Code is formatted (`go fmt`)
-- [ ] No vet warnings (`go vet ./...`)
-- [ ] Documentation updated (README, USAGE, or code comments)
-- [ ] Commit messages are clear and descriptive
+## Testing
 
-## Reporting Bugs
+```bash
+go test ./...                           # all
+go test ./internal/index/ -v            # specific
+go test -race ./...                     # race detector
+go test -coverprofile=c.out ./...       # coverage
+```
 
-Use the [Bug Report](https://github.com/zzszmyf/codefuse/issues/new?template=bug_report.md) template. Include:
+## CI
 
-- CodeFuse version (`codefuse --version`)
-- Go version (`go version`)
-- Operating system
-- Steps to reproduce
-- Expected vs actual behavior
-
-## Requesting Features
-
-Use the [Feature Request](https://github.com/zzszmyf/codefuse/issues/new?template=feature_request.md) template. Describe:
-
-- The problem you're trying to solve
-- Your proposed solution
-- Alternatives you've considered
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the Apache-2.0 License.
+- Ubuntu: Go 1.25/1.26 + tree-sitter + race detector
+- macOS: Go 1.25 + race detector
+- Lint: gofmt + go vet + golangci-lint
+- Release: GoReleaser (linux/darwin/windows, amd64/arm64)
