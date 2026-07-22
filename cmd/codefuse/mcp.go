@@ -146,7 +146,7 @@ func (s *mcpServer) handleToolsList(req rpcRequest) {
 			InputSchema: inputSchema{
 				Type: "object",
 				Properties: map[string]property{
-					"name": {Type: "string", Description: "Symbol name to search for"},
+					"name":       {Type: "string", Description: "Symbol name to search for"},
 					"ignoreCase": {Type: "boolean", Description: "Case-insensitive search (default: false)"},
 				},
 				Required: []string{"name"},

@@ -133,4 +133,3 @@ func TestParseError_Format(t *testing.T) {
 	assert.Contains(t, err.Error(), "test.py")
 	assert.Contains(t, err.Error(), "python")
 }
-

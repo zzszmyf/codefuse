@@ -1,9 +1,9 @@
 // Package types defines the core data types for codefuse.
 //
 // Design principles:
-//   1. Thin index: stores only name→position mappings. Code is the truth source.
-//   2. Sinks: unresolved external calls auto-tagged by package name (no hardcoded categories).
-//   3. Annotations: agent-writable metadata layer, persisted alongside the index.
+//  1. Thin index: stores only name→position mappings. Code is the truth source.
+//  2. Sinks: unresolved external calls auto-tagged by package name (no hardcoded categories).
+//  3. Annotations: agent-writable metadata layer, persisted alongside the index.
 package types
 
 // IndexVersion is the current index format version.
@@ -65,12 +65,12 @@ type Sink struct {
 // Agent analyzes sinks, identifies patterns, and annotates symbols with metadata
 // like sink_type=db, deprecated=true, entry_point=true.
 type Annotation struct {
-	ID       string `json:"id"`        // unique id, e.g. uuid
-	NodeID   string `json:"node_id"`   // which symbol this annotates
-	Key      string `json:"key"`       // "sink_type", "entry_point", "deprecated", etc.
-	Value    string `json:"value"`     // "db", "true", etc.
-	Source   string `json:"source"`    // "agent", "human", "ci"
-	Evidence string `json:"evidence"`  // why: "calls sql.Query via gorm"
+	ID       string `json:"id"`       // unique id, e.g. uuid
+	NodeID   string `json:"node_id"`  // which symbol this annotates
+	Key      string `json:"key"`      // "sink_type", "entry_point", "deprecated", etc.
+	Value    string `json:"value"`    // "db", "true", etc.
+	Source   string `json:"source"`   // "agent", "human", "ci"
+	Evidence string `json:"evidence"` // why: "calls sql.Query via gorm"
 }
 
 // EdgeKind constants.
@@ -80,14 +80,14 @@ const (
 
 // Graph is the complete code index.
 type Graph struct {
-	Version     string      `json:"version"`
-	ProjectPath string      `json:"project_path"`
-	Files       []FileEntry `json:"files"`
-	Nodes       []Node      `json:"nodes"`
-	Edges       []Edge      `json:"edges"`
-	Sinks       []Sink      `json:"sinks"`               // unresolved external calls
-	Imports     map[string][]FileImport `json:"imports"`  // file path → its imports
-	ModMap      ModuleMap   `json:"mod_map"`              // dotted module → file path
+	Version     string                  `json:"version"`
+	ProjectPath string                  `json:"project_path"`
+	Files       []FileEntry             `json:"files"`
+	Nodes       []Node                  `json:"nodes"`
+	Edges       []Edge                  `json:"edges"`
+	Sinks       []Sink                  `json:"sinks"`   // unresolved external calls
+	Imports     map[string][]FileImport `json:"imports"` // file path → its imports
+	ModMap      ModuleMap               `json:"mod_map"` // dotted module → file path
 
 	// Runtime indexes (not serialized)
 	nodeByID    map[string]*Node   `json:"-"`

@@ -17,21 +17,21 @@ type grepOptions struct {
 	pattern       string
 	paths         []string
 	recursive     bool
-	lineNumber    bool // -n
-	filesOnly     bool // -l
-	ignoreCase    bool // -i
-	countOnly     bool // -c
-	wordRegexp    bool // -w
-	invertMatch   bool // -v
-	onlyMatching  bool // -o
-	maxCount      int  // -m N (0 = unlimited)
-	quiet         bool // -q
-	forceText     bool // -t / --text (codefuse ext: skip index, use real grep)
-	contextAfter  int  // -A N
-	contextBefore int  // -B N
-	contextAround int  // -C N
-	showFile      bool // -H (default with multiple files)
-	noFile        bool // -h
+	lineNumber    bool     // -n
+	filesOnly     bool     // -l
+	ignoreCase    bool     // -i
+	countOnly     bool     // -c
+	wordRegexp    bool     // -w
+	invertMatch   bool     // -v
+	onlyMatching  bool     // -o
+	maxCount      int      // -m N (0 = unlimited)
+	quiet         bool     // -q
+	forceText     bool     // -t / --text (codefuse ext: skip index, use real grep)
+	contextAfter  int      // -A N
+	contextBefore int      // -B N
+	contextAround int      // -C N
+	showFile      bool     // -H (default with multiple files)
+	noFile        bool     // -h
 	include       []string // --include=GLOB
 	exclude       []string // --exclude=GLOB
 }

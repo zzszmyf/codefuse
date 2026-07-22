@@ -26,8 +26,8 @@ import (
 
 // Import patterns per language.
 var (
-	pyFromPat   = regexp.MustCompile(`^from\s+([\w.]+)\s+import\s+(.+)`)
-	pyImportPat = regexp.MustCompile(`^import\s+([\w.]+)(?:\s+as\s+(\w+))?`)
+	pyFromPat     = regexp.MustCompile(`^from\s+([\w.]+)\s+import\s+(.+)`)
+	pyImportPat   = regexp.MustCompile(`^import\s+([\w.]+)(?:\s+as\s+(\w+))?`)
 	javaImportPat = regexp.MustCompile(`^import\s+(static\s+)?([\w.]+)(?:\.(\*|\w+))?\s*;`)
 	goImportPat   = regexp.MustCompile(`"([^"]+)"`)
 )
@@ -459,8 +459,9 @@ func extractCallee(node tsNode, calleeTags []string) string {
 }
 
 // extractDottedName reconstructs a dotted name from a qualified node like:
-//   <attribute> → "obj.method"
-//   <member_expression> → "obj.method"
+//
+//	<attribute> → "obj.method"
+//	<member_expression> → "obj.method"
 func extractDottedName(node tsNode) string {
 	var object, attribute string
 	for _, child := range node.Nodes {
@@ -560,7 +561,7 @@ func ParseImports(content, relPath, language string) ([]types.FileImport, types.
 func parsePythonImportLine(line, relPath string, imports *[]types.FileImport, modMap types.ModuleMap) {
 	// from X import Y, Z as W
 	if m := pyFromPat.FindStringSubmatch(line); m != nil {
-		module := m[1]                  // e.g. "db.user_dao"
+		module := m[1] // e.g. "db.user_dao"
 		targetFile := moduleToPath(module, ".py")
 		modMap[module] = targetFile
 
@@ -699,9 +700,9 @@ func moduleToPath(dotted, ext string) string {
 // =============================================================================
 
 var (
-	pyAssignPat   = regexp.MustCompile(`(\w+)\s*=\s*(\w+)\(`)
-	pyParamPat    = regexp.MustCompile(`(\w+)\s*:\s*(\w+)`)
-	pyGenericPat  = regexp.MustCompile(`(\w+)\s*:\s*(?:List|Optional|Dict)\[(\w+)`)
+	pyAssignPat    = regexp.MustCompile(`(\w+)\s*=\s*(\w+)\(`)
+	pyParamPat     = regexp.MustCompile(`(\w+)\s*:\s*(\w+)`)
+	pyGenericPat   = regexp.MustCompile(`(\w+)\s*:\s*(?:List|Optional|Dict)\[(\w+)`)
 	javaVarDeclPat = regexp.MustCompile(`(\w+)\s+(\w+)\s*=`)
 	javaGenericPat = regexp.MustCompile(`(?:List|Optional|Map)<(\w+)>\s+(\w+)`)
 )
@@ -747,4 +748,3 @@ func ExtractVarMap(content, language string) map[string]string {
 	}
 	return vm
 }
-

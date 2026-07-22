@@ -101,7 +101,7 @@ func TestResolveEdge_CrossFile_WithImport(t *testing.T) {
 	// Edge: login → userDao.findById (callee name contains method call)
 	edge := types.Edge{
 		From: "service/AuthService.java:10:1", // login
-		To:   "userDao.findById",               // callee expression
+		To:   "userDao.findById",              // callee expression
 		Kind: types.EdgeKindCalls,
 		File: "service/AuthService.java",
 		Line: 11,

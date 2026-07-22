@@ -576,7 +576,7 @@ type EdgeWithNode struct {
 
 // Manifest tracks file hashes for incremental indexing.
 type Manifest struct {
-	Version string            `json:"version"`
+	Version string           `json:"version"`
 	Files   map[string]int64 `json:"files"` // path → mtime
 }
 
