@@ -13,6 +13,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/xml"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +41,31 @@ func TreeSitterAvailable() bool {
 // =============================================================================
 // Unified extraction entry points
 // =============================================================================
+
+// ParseError describes a tree-sitter parse failure.
+type ParseError struct {
+	File   string
+	Lang   string
+	Stderr string
+	Err    error
+}
+
+func (e *ParseError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("parse %s (%s): %v (stderr: %s)", e.File, e.Lang, e.Err, e.Stderr)
+	}
+	return fmt.Sprintf("parse %s (%s): %s", e.File, e.Lang, e.Stderr)
+}
+
+// ExtractFromXML parses tree-sitter XML output directly.
+// Useful for testing with pre-generated XML fixtures (no tree-sitter needed).
+func ExtractFromXML(xmlData []byte, relPath, language string) ([]types.Node, []types.Edge, []types.Sink, error) {
+	cfg, ok := config.Builtin[language]
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("unsupported language: %s", language)
+	}
+	return parseXML(xmlData, relPath, &cfg)
+}
 
 // ExtractFile parses a single source file and extracts thin symbol nodes, edges, and sinks.
 func ExtractFile(absPath, relPath, language string) ([]types.Node, []types.Edge, []types.Sink, error) {
@@ -365,19 +391,24 @@ func extractName(node tsNode, nameTags []string) string {
 		return node.Name
 	}
 
-	// Search children for name-carrying nodes.
-	for _, child := range node.Nodes {
-		if isNameTag(child.XMLName.Local, nameTags) {
-			if child.Name != "" {
-				return child.Name
+	// First pass: prefer plain "identifier" over "type_identifier" (for Java methods).
+	for _, preferTag := range []string{"identifier", ""} {
+		for _, child := range node.Nodes {
+			if preferTag != "" && child.XMLName.Local != preferTag {
+				continue
 			}
-			if text := strings.TrimSpace(child.Chardata); text != "" {
-				return text
+			if isNameTag(child.XMLName.Local, nameTags) {
+				if child.Name != "" {
+					return child.Name
+				}
+				if text := strings.TrimSpace(child.Chardata); text != "" {
+					return text
+				}
 			}
-		}
-		// Recurse one level for nested identifiers (e.g., type_spec → type_identifier).
-		if result := extractName(child, nameTags); result != "" {
-			return result
+			// Recurse one level for nested identifiers.
+			if result := extractName(child, nameTags); result != "" {
+				return result
+			}
 		}
 	}
 	return ""

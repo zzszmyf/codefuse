@@ -1,0 +1,125 @@
+<?xml version="1.0"?>
+<sources>
+  <source name="/tmp/fixture_py.py">
+    <module srow="0" scol="0" erow="12" ecol="0">
+      <import_statement srow="0" scol="0" erow="0" ecol="10">
+        import
+        <dotted_name field="name" srow="0" scol="7" erow="0" ecol="10">
+          <identifier srow="0" scol="7" erow="0" ecol="10">sql</identifier>
+        </dotted_name>
+      </import_statement>
+      <import_from_statement srow="1" scol="0" erow="1" ecol="26">
+        from
+        <dotted_name field="module_name" srow="1" scol="5" erow="1" ecol="11">
+          <identifier srow="1" scol="5" erow="1" ecol="7">db</identifier>
+          .
+          <identifier srow="1" scol="8" erow="1" ecol="11">dao</identifier>
+        </dotted_name>
+        import
+        <dotted_name field="name" srow="1" scol="19" erow="1" ecol="26">
+          <identifier srow="1" scol="19" erow="1" ecol="26">UserDao</identifier>
+        </dotted_name>
+      </import_from_statement>
+      <class_definition srow="3" scol="0" erow="8" ecol="21">
+        class
+        <identifier field="name" srow="3" scol="6" erow="3" ecol="17">AuthService</identifier>
+        :
+        <block field="body" srow="4" scol="4" erow="8" ecol="21">
+          <function_definition srow="4" scol="4" erow="8" ecol="21">
+            def
+            <identifier field="name" srow="4" scol="8" erow="4" ecol="13">login</identifier>
+            <parameters field="parameters" srow="4" scol="13" erow="4" ecol="31">
+              (
+              <identifier srow="4" scol="14" erow="4" ecol="18">self</identifier>
+              ,
+              <typed_parameter srow="4" scol="20" erow="4" ecol="30">
+                <identifier srow="4" scol="20" erow="4" ecol="25">token</identifier>
+                :
+                <type field="type" srow="4" scol="27" erow="4" ecol="30">
+                  <identifier srow="4" scol="27" erow="4" ecol="30">str</identifier>
+                </type>
+              </typed_parameter>
+              )
+            </parameters>
+            :
+            <block field="body" srow="5" scol="8" erow="8" ecol="21">
+              <assignment srow="5" scol="8" erow="5" ecol="23">
+                <identifier field="left" srow="5" scol="8" erow="5" ecol="11">dao</identifier>
+                =
+                <call field="right" srow="5" scol="14" erow="5" ecol="23">
+                  <identifier field="function" srow="5" scol="14" erow="5" ecol="21">UserDao</identifier>
+                  <argument_list field="arguments" srow="5" scol="21" erow="5" ecol="23">
+                    (
+                    )
+                  </argument_list>
+                </call>
+              </assignment>
+              <assignment srow="6" scol="8" erow="6" ecol="36">
+                <identifier field="left" srow="6" scol="8" erow="6" ecol="14">result</identifier>
+                =
+                <call field="right" srow="6" scol="17" erow="6" ecol="36">
+                  <attribute field="function" srow="6" scol="17" erow="6" ecol="29">
+                    <identifier field="object" srow="6" scol="17" erow="6" ecol="20">dao</identifier>
+                    .
+                    <identifier field="attribute" srow="6" scol="21" erow="6" ecol="29">findById</identifier>
+                  </attribute>
+                  <argument_list field="arguments" srow="6" scol="29" erow="6" ecol="36">
+                    (
+                    <identifier srow="6" scol="30" erow="6" ecol="35">token</identifier>
+                    )
+                  </argument_list>
+                </call>
+              </assignment>
+              <call srow="7" scol="8" erow="7" ecol="40">
+                <attribute field="function" srow="7" scol="8" erow="7" ecol="17">
+                  <identifier field="object" srow="7" scol="8" erow="7" ecol="11">sql</identifier>
+                  .
+                  <identifier field="attribute" srow="7" scol="12" erow="7" ecol="17">Query</identifier>
+                </attribute>
+                <argument_list field="arguments" srow="7" scol="17" erow="7" ecol="40">
+                  (
+                  <string srow="7" scol="18" erow="7" ecol="39">
+                    <string_start srow="7" scol="18" erow="7" ecol="19">"</string_start>
+                    <string_content srow="7" scol="19" erow="7" ecol="38">SELECT * FROM users</string_content>
+                    <string_end srow="7" scol="38" erow="7" ecol="39">"</string_end>
+                  </string>
+                  )
+                </argument_list>
+              </call>
+              <return_statement srow="8" scol="8" erow="8" ecol="21">
+                return
+                <identifier srow="8" scol="15" erow="8" ecol="21">result</identifier>
+              </return_statement>
+            </block>
+          </function_definition>
+        </block>
+      </class_definition>
+      <function_definition srow="10" scol="0" erow="11" ecol="16">
+        def
+        <identifier field="name" srow="10" scol="4" erow="10" ecol="10">helper</identifier>
+        <parameters field="parameters" srow="10" scol="10" erow="10" ecol="18">
+          (
+          <typed_parameter srow="10" scol="11" erow="10" ecol="17">
+            <identifier srow="10" scol="11" erow="10" ecol="12">x</identifier>
+            :
+            <type field="type" srow="10" scol="14" erow="10" ecol="17">
+              <identifier srow="10" scol="14" erow="10" ecol="17">int</identifier>
+            </type>
+          </typed_parameter>
+          )
+        </parameters>
+        :
+        <block field="body" srow="11" scol="4" erow="11" ecol="16">
+          <return_statement srow="11" scol="4" erow="11" ecol="16">
+            return
+            <binary_operator srow="11" scol="11" erow="11" ecol="16">
+              <identifier field="left" srow="11" scol="11" erow="11" ecol="12">x</identifier>
+              +
+              <integer field="right" srow="11" scol="15" erow="11" ecol="16">1</integer>
+            </binary_operator>
+          </return_statement>
+        </block>
+      </function_definition>
+    </module>
+  </source>
+</sources>

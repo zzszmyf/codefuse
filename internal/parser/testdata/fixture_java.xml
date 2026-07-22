@@ -1,0 +1,96 @@
+<?xml version="1.0"?>
+<sources>
+  <source name="/tmp/fixture_java.java">
+    <program srow="0" scol="0" erow="10" ecol="0">
+      <import_declaration srow="0" scol="0" erow="0" ecol="23">
+        import
+        <scoped_identifier srow="0" scol="7" erow="0" ecol="22">
+          <scoped_identifier field="scope" srow="0" scol="7" erow="0" ecol="14">
+            <identifier field="scope" srow="0" scol="7" erow="0" ecol="10">com</identifier>
+            .
+            <identifier field="name" srow="0" scol="11" erow="0" ecol="14">foo</identifier>
+          </scoped_identifier>
+          .
+          <identifier field="name" srow="0" scol="15" erow="0" ecol="22">UserDao</identifier>
+        </scoped_identifier>
+        ;
+      </import_declaration>
+      <import_declaration srow="1" scol="0" erow="1" ecol="27">
+        import
+        <scoped_identifier srow="1" scol="7" erow="1" ecol="26">
+          <scoped_identifier field="scope" srow="1" scol="7" erow="1" ecol="15">
+            <identifier field="scope" srow="1" scol="7" erow="1" ecol="11">java</identifier>
+            .
+            <identifier field="name" srow="1" scol="12" erow="1" ecol="15">sql</identifier>
+          </scoped_identifier>
+          .
+          <identifier field="name" srow="1" scol="16" erow="1" ecol="26">Connection</identifier>
+        </scoped_identifier>
+        ;
+      </import_declaration>
+      <class_declaration srow="3" scol="0" erow="9" ecol="1">
+        class
+        <identifier field="name" srow="3" scol="6" erow="3" ecol="17">AuthService</identifier>
+        <class_body field="body" srow="3" scol="18" erow="9" ecol="1">
+          {
+          <method_declaration srow="4" scol="4" erow="8" ecol="5">
+            <type_identifier field="type" srow="4" scol="4" erow="4" ecol="10">String</type_identifier>
+            <identifier field="name" srow="4" scol="11" erow="4" ecol="16">login</identifier>
+            <formal_parameters field="parameters" srow="4" scol="16" erow="4" ecol="30">
+              (
+              <formal_parameter srow="4" scol="17" erow="4" ecol="29">
+                <type_identifier field="type" srow="4" scol="17" erow="4" ecol="23">String</type_identifier>
+                <identifier field="name" srow="4" scol="24" erow="4" ecol="29">token</identifier>
+              </formal_parameter>
+              )
+            </formal_parameters>
+            <block field="body" srow="4" scol="31" erow="8" ecol="5">
+              {
+              <local_variable_declaration srow="5" scol="8" erow="5" ecol="36">
+                <type_identifier field="type" srow="5" scol="8" erow="5" ecol="15">UserDao</type_identifier>
+                <variable_declarator field="declarator" srow="5" scol="16" erow="5" ecol="35">
+                  <identifier field="name" srow="5" scol="16" erow="5" ecol="19">dao</identifier>
+                  =
+                  <object_creation_expression field="value" srow="5" scol="22" erow="5" ecol="35">
+                    new
+                    <type_identifier field="type" srow="5" scol="26" erow="5" ecol="33">UserDao</type_identifier>
+                    <argument_list field="arguments" srow="5" scol="33" erow="5" ecol="35">
+                      (
+                      )
+                    </argument_list>
+                  </object_creation_expression>
+                </variable_declarator>
+                ;
+              </local_variable_declaration>
+              <local_variable_declaration srow="6" scol="8" erow="6" ecol="44">
+                <type_identifier field="type" srow="6" scol="8" erow="6" ecol="14">String</type_identifier>
+                <variable_declarator field="declarator" srow="6" scol="15" erow="6" ecol="43">
+                  <identifier field="name" srow="6" scol="15" erow="6" ecol="21">result</identifier>
+                  =
+                  <method_invocation field="value" srow="6" scol="24" erow="6" ecol="43">
+                    <identifier field="object" srow="6" scol="24" erow="6" ecol="27">dao</identifier>
+                    .
+                    <identifier field="name" srow="6" scol="28" erow="6" ecol="36">findById</identifier>
+                    <argument_list field="arguments" srow="6" scol="36" erow="6" ecol="43">
+                      (
+                      <identifier srow="6" scol="37" erow="6" ecol="42">token</identifier>
+                      )
+                    </argument_list>
+                  </method_invocation>
+                </variable_declarator>
+                ;
+              </local_variable_declaration>
+              <return_statement srow="7" scol="8" erow="7" ecol="22">
+                return
+                <identifier srow="7" scol="15" erow="7" ecol="21">result</identifier>
+                ;
+              </return_statement>
+              }
+            </block>
+          </method_declaration>
+          }
+        </class_body>
+      </class_declaration>
+    </program>
+  </source>
+</sources>
