@@ -3,34 +3,31 @@
 > **grep for code, not text.**
 
 [![CI](https://github.com/zzszmyf/codefuse/actions/workflows/ci.yml/badge.svg)](https://github.com/zzszmyf/codefuse/actions)
-[![Go Report Card](https://goreportcard.com/badge/github.com/zzszmyf/codefuse)](https://goreportcard.com/report/github.com/zzszmyf/codefuse)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-CodeFuse indexes your codebase into a **thin symbol→location map**, then exposes it through a **drop-in `grep` replacement** — same flags, same output format, but instead of thousands of text matches you get exactly the symbol definitions you're looking for.
+A **drop-in `grep` replacement** for AI coding agents. Same flags. Same output. But instead of searching text, it **understands code** — symbol definitions, call graphs, external dependencies, and transitive reachability. All from source. Zero hallucination.
 
 ```bash
-# Same command, radically different results:
-grep "LLM" -rn .                     # → 6,596 text matches (comments, strings, imports...)
-codefuse grep "LLM" .                # → 10 symbol definitions (the actual class and its instances)
-
-# Or just:
-ln -s $(which codefuse) /usr/local/bin/grep
-grep "LLM" -rn .                     # Now grep returns symbol definitions
+# Before: grep finds text → 6,596 matches (comments, strings, noise)
+grep "LLM" -rn .
+# After: CodeFuse finds symbols → 1 result (the actual class definition)
+ln -sf $(which codefuse) /usr/local/bin/grep
+grep "LLM" -rn .
 ```
 
 ## Why
 
-AI coding agents spend 40% of their tool calls on `grep` + `read_file` loops — grepping a name, reading 15 files to find the one that's actually the definition, then grepping again for callers.
-
-CodeFuse replaces this loop with a **single call**: index tells you *where* to look, actual source code tells you *what's there*. Code is the single source of truth.
+AI agents spend ~40% of tool calls on `grep` → `read_file` loops.  
+CodeFuse compresses that to **one call**: a thin index locates symbols, actual source code provides the truth.
 
 | | `grep` | CodeFuse |
 |---|---|---|
-| What it finds | Text patterns anywhere | Symbol definitions |
-| Noise level | Thousands of hits | 10–500× fewer hits |
-| Speed | Fast for text, slow to verify | Fast to locate, fast to verify |
+| Finds | Text patterns anywhere | Symbol definitions + call graph |
+| Noise | Thousands of hits | 10–600× fewer |
+| Cross-file | No | Import-aware call edges |
+| External deps | No | Auto-tagged sinks (sql, http, …) |
+| Agent tool calls | 5–15 per search | 1–2 |
 | Truth source | Direct file read | Index → file read (always current) |
-| Agent tool calls | 5–15 per search | 1–2 per search |
 
 ## Quick Start
 
@@ -38,79 +35,135 @@ CodeFuse replaces this loop with a **single call**: index tells you *where* to l
 # 1. Install
 go install github.com/yifanmeng/codefuse/cmd/codefuse@latest
 
-# 2. Set up tree-sitter (one-time)
+# 2. Set up tree-sitter grammars (one-time per machine)
 codefuse setup treesitter --auto
 
-# 3. Index your project
-codefuse index ./my-project
-# → Indexed 2426 files, 28293 symbols, 13359 edges in 30s
+# 3. Index your project (~30s for 2,400 files)
+codefuse index .
 
-# 4. Query — grep-compatible
-codefuse grep "AuthService" .             # find definitions
-codefuse grep -n "execute_model" src/     # with line numbers
-codefuse grep -l "Scheduler" .            # files only
+# 4. Use as grep — same flags, symbol results
+codefuse grep "AuthService" .
+codefuse grep -n -i "scheduler" src/
 
-# 5. Query — structured (for deeper exploration)
-codefuse query AuthService                # symbol details
-codefuse query AuthService --callers      # who calls me
-codefuse query AuthService --callees      # who do I call
-codefuse outline src/main.go              # file structure
+# 5. Explore callers / callees
+codefuse query AuthService --callers
 
-# 6. Real-time index updates
-codefuse watch                            # watches files, auto-updates index
+# 6. See external dependencies (auto-tagged by package name)
+codefuse sinks
+codefuse sinks AuthService
+codefuse sinks --pkg sql
+
+# 7. Ask "does method A reach the database?"
+codefuse reachable AuthService --pkg sql
+
+# 8. Watch for changes (auto-update index)
+codefuse watch &
+
+# 9. MCP server (for Claude Code, Cursor, etc.)
+codefuse serve
 ```
 
 ## Benchmark
 
-### vllm — Python, 2,426 files, 28K symbols
+### vllm — Python 2,426 files · 28K symbols · 21K edges · 74K sinks
 
-Index: `3.5 MB` (nodes only), built in `~30s`.
-
-| Query | CodeFuse | grep | cf hits | grep hits | Noise reduction |
+| Query | CodeFuse | grep | cf hits | grep hits | Reduction |
 |---|---|---|---|---|---|
-| `flash_attn` | **73ms** | 59ms | **16** | 216 | **13×** |
-| `Scheduler` | **66ms** | 60ms | **2** | 512 | **256×** |
-| `ModelRunner` | **67ms** | 61ms | **12** | 244 | **20×** |
-| `tensor_parallel` | **70ms** | 60ms | **9** | 467 | **52×** |
-| `SamplingParams` | **69ms** | 59ms | **1** | 664 | **664×** |
+| `LLM` | 67ms | 161ms | **1** | 6,596 | **6,596×** |
+| `flash_attn` | 76ms | 61ms | **16** | 216 | **13×** |
+| `Scheduler` | 65ms | 63ms | **1** | 512 | **512×** |
+| `ModelRunner` | 67ms | 64ms | **12** | 244 | **20×** |
+| `SamplingParams` | 63ms | 63ms | **1** | 664 | **664×** |
 
-### dubbo — Java, 4,048 files, 45K symbols
+### dubbo — Java 4,048 files · 45K symbols · 5.5K edges · 1.8K sinks
 
-Index: `11 MB` (nodes only), built in `~15s`.
-
-| Query | CodeFuse | grep | cf hits | grep hits | Noise reduction |
+| Query | CodeFuse | grep | cf hits | grep hits | Reduction |
 |---|---|---|---|---|---|
-| `ServiceDiscovery` | **66ms** | 340ms | **13** | 532 | **41×** |
-| `LoadBalance` | **71ms** | 163ms | **6** | 212 | **35×** |
-| `ExtensionLoader` | **60ms** | 164ms | **6** | 886 | **148×** |
-| `FilterChain` | **63ms** | 165ms | **2** | 99 | **50×** |
-| `ClusterInvoker` | **64ms** | 164ms | **17** | 515 | **30×** |
+| `RegistryService` | 59ms | 222ms | **1** | 137 | **137×** |
+| `ExtensionLoader` | 59ms | 172ms | **6** | 886 | **148×** |
+| `ServiceConfig` | 60ms | 169ms | **35** | 624 | **18×** |
 
-**CodeFuse matches or beats grep on speed, while returning 10–600× fewer results — every result is a symbol definition, not a random text match.**
+**Per-query speed competitive with grep; result quality 10–6,000× better.**
+
+## How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Layer 1: Thin Index (~5MB)                                      │
+│   name → [(file, line, col), ...]                               │
+│   Trie + gob binary. Built once. Positions only — no content.   │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer 2: Import Resolution                                      │
+│   Python: from X import Y   Java: import com.foo.Bar            │
+│   Go: import "path"         Rust: use crate::foo                │
+│   Builds FileImports + ModuleMap per file.                      │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer 3: Type Inference (VarMap)                                │
+│   dao = UserDao()      →  {"dao": "UserDao"}                   │
+│   def f(dao: UserDao): →  {"dao": "UserDao"}                   │
+│   List<UserDao> x = …  →  {"x": "UserDao"}                     │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer 4: Cross-file Call Graph                                  │
+│   dao.findById() → varMap["dao"]="UserDao" → import "UserDao"  │
+│   → target file → findById ✅                                   │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer 5: External Sinks                                         │
+│   torch.tensor() → pkg=torch   sql.Query() → pkg=sql            │
+│   http.Get() → pkg=http        os.ReadFile() → pkg=os           │
+│   Auto-tagged by package name. Zero hardcoded categories.       │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer 6: grep Interface                                         │
+│   file:line:content — same output as grep                      │
+│   No index? Falls back to real grep automatically.              │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ## grep Compatibility
 
-CodeFuse implements the grep interface so AI agents don't need to change a single line of code:
+Full grep flag coverage:
 
-| grep flag | Supported | Behavior |
-|---|---|---|
-| `pattern` | ✅ | Symbol name (exact → prefix → substring → glob) |
-| `-r`, `-R` | ✅ | Recursive (default) |
-| `-n` | ✅ | Line numbers |
-| `-l` | ✅ | Files only |
-| `-i` | ✅ | Case-insensitive |
-| `-c` | ✅ | Count matches |
-| `-w` | ✅ | Whole-word match |
-| `-A`, `-B`, `-C N` | ✅ | Context lines |
-| `-t`, `--text` | ✅ | Force real grep (skip index) |
+| Flag | Behavior |
+|---|---|
+| `pattern` | Symbol name (exact → CamelCase → substring → glob) |
+| `-r`, `-R` | Recursive (default) |
+| `-n` | Line numbers |
+| `-l` | Files only |
+| `-i` | Case-insensitive (trie + exact + substring) |
+| `-c` | Count matches |
+| `-w` | Whole-word match |
+| `-v` | Invert match |
+| `-o` | Only matching part |
+| `-m N` | Max count |
+| `-q` | Quiet (exit code only) |
+| `-A N`, `-B N`, `-C N` | Context lines |
+| `-t`, `--text` | Bypass index, use real grep |
+| `--include=GLOB` | File pattern filter |
+| `--exclude=GLOB` | File exclusion pattern |
 
-**How it works:** when a `.codefuse/` index exists, `codefuse grep` queries the index for symbol definitions and reads actual source files for current line content. No index, or `--text` flag → falls through to the real `grep`. Zero configuration, always works.
+## Commands
+
+| Command | Description |
+|---|---|
+| `codefuse index [path]` | Build the thin symbol index |
+| `codefuse grep <flags> <pattern> [path]` | Drop-in grep replacement |
+| `codefuse query <symbol>` | Symbol definitions |
+| `codefuse query <symbol> --callers` | Who calls this symbol |
+| `codefuse query <symbol> --callees` | Who this symbol calls |
+| `codefuse sinks` | All external calls, grouped by package |
+| `codefuse sinks <symbol>` | External calls for a symbol |
+| `codefuse sinks --pkg sql` | Filter by package name |
+| `codefuse reachable <symbol> --pkg sql` | BFS path to matching sink |
+| `codefuse outline <file>` | Symbols in a file, sorted by line |
+| `codefuse list` | Index summary |
+| `codefuse watch [path]` | Watch files, auto-update index |
+| `codefuse serve [path]` | MCP server (stdio JSON-RPC) |
+| `codefuse setup treesitter --auto` | Install tree-sitter grammars |
 
 ## Supported Languages
 
-8 languages. Each requires ~5 lines of configuration (tree-sitter node type names). No per-language Go code.
+8 languages. Each is ~5 lines of **declaration node type names**. No per-language Go code.
 
-| Language | Extensions | Examples |
+| Language | Extensions | Declaration types |
 |---|---|---|
 | **Go** | `.go` | func, method, type |
 | **Python** | `.py` | def, class |
@@ -121,133 +174,17 @@ CodeFuse implements the grep interface so AI agents don't need to change a singl
 | **C** | `.c`, `.h` | function |
 | **C++** | `.cpp`, `.cc`, `.hpp` | function, class, struct |
 
-**Adding a new language:** add an entry to `pkg/config/config.go`. No parser code needed.
-
-## Architecture
-
-```
-CodeFuse — three layers, one job: find symbols fast.
-
-┌─ Layer 1: Thin Index (~3 MB) ───────────────────┐
-│  name → [(file, line, col), ...]                 │
-│  Trie + gob binary, built once, loads in ~10ms   │
-│  Stores POSITIONS only — never content            │
-└──────────────────┬───────────────────────────────┘
-                   │ where to look
-                   ▼
-┌─ Layer 2: Source Files ──────────────────────────┐
-│  Read actual code at index positions              │
-│  Code is the SINGLE source of truth               │
-│  Index stale? No problem — you read current code  │
-└──────────────────┬───────────────────────────────┘
-                   │ current content
-                   ▼
-┌─ Layer 3: grep Interface ────────────────────────┐
-│  file:line:content — identical to grep output    │
-│  Same flags, same format, zero learning curve     │
-│  No index? Falls back to real grep automatically  │
-└──────────────────────────────────────────────────┘
-```
-
-## Commands
-
-| Command | Description |
-|---|---|
-| `codefuse index [path]` | Build the thin symbol index |
-| `codefuse grep <flags> <pattern> [path]` | grep-compatible symbol search |
-| `codefuse query <symbol>` | Find symbol definitions |
-| `codefuse query <symbol> --callers` | Show who calls this symbol |
-| `codefuse query <symbol> --callees` | Show who this symbol calls |
-| `codefuse outline <file>` | Show symbols in a file, sorted by line |
-| `codefuse list` | Index summary and symbol distribution |
-| `codefuse watch [path]` | Watch files and auto-update index |
-| `codefuse setup treesitter --auto` | Install tree-sitter grammars |
-
-## Replace grep
-
-CodeFuse is designed to be a **transparent drop-in** — no configuration, no workflow changes, no new tool for AI agents to learn.
-
-### Option 1: Symlink (recommended)
-
-```bash
-# Replace grep system-wide
-ln -sf $(which codefuse) /usr/local/bin/grep
-
-# Now every grep call uses CodeFuse under the hood:
-grep "AuthService" -rn ./src
-# → returns symbol definitions, not text matches
-# → falls back to real grep when there's no index or --text is used
-```
-
-### Option 2: Alias
-
-```bash
-# In your shell config (.zshrc / .bashrc):
-alias grep='codefuse grep'
-
-# Or for AI agent sessions, set in the agent's environment:
-export PATH="/path/to/codefuse-dir:$PATH"  # where a 'grep' symlink lives
-```
-
-### Option 3: AI agent configuration
-
-Most AI coding agents call `grep` as a shell tool. No agent-side changes needed — just make sure `grep` resolves to CodeFuse:
-
-```json
-// Claude Code settings.json — no changes needed, just ensure PATH includes codefuse
-// Cursor / Copilot — no changes, they use the system grep
-```
-
-If the agent allows custom tool definitions, you can also expose `codefuse grep` as a separate tool while keeping native `grep` for actual text searches:
-
-```json
-{
-  "tools": {
-    "grep": "codefuse grep",       // symbol search (index-powered)
-    "greptext": "grep --text"      // text search (real grep fallback)
-  }
-}
-```
-
-### How the fallback works
-
-```
-User/Agent runs: grep "some_query" -rn ./
-
-    Is there a .codefuse/ index?
-    ├─ YES → Query index for symbol definitions
-    │         ├─ Found → Output grep-format results (file:line:content)
-    │         └─ Not found → Fall through to real grep
-    │                        (captures text in comments, strings, etc.)
-    └─ NO  → Fall through to real grep
-              (behaves exactly like native grep)
-
-    --text / -t flag → Skip index, always use real grep
-```
-
-**The result:** zero risk. If indexing isn't set up, or the symbol isn't in the index, or you pass `--text` — it's just grep.
-
-### Per-project setup
-
-```bash
-# One-time setup per project:
-cd my-project
-codefuse setup treesitter --auto   # install grammars (once per machine)
-codefuse index .                    # build index (15-30s)
-codefuse watch &                    # optional: keep index live
-
-# From now on, grep in this project uses the index:
-grep "Scheduler" -rn .
-# → 2 results (symbol definitions) instead of 512 (text matches)
-```
+Import resolution: Python, Java, Go, Rust (regex-based).  
+Type inference: Python (assignment, parameter, generic) + Java (declaration, generic).  
+**New language:** add an entry to `pkg/config/config.go`. Zero parser code.
 
 ## Design Principles
 
-1. **Code is the only truth.** The index stores positions, never content. Every query reads actual source files.
-2. **Language is configuration, not code.** New language = 5 lines of tree-sitter node types. No parser to write.
-3. **Don't change the user.** Same flags as grep, same output format. Drop the binary in, rename it `grep`, done.
-4. **Fast to rebuild.** Full re-index takes 15–30s. No need for complex incremental consistency guarantees.
-5. **Safe by default.** No index? Falls back to real grep. Wrong result? Pass `--text` to bypass. Zero risk.
+1. **Code is the only truth.** Index stores positions, never content. Every query reads actual source files.
+2. **Language is configuration, not code.** Declarations, calls, imports — just tree-sitter node type names.
+3. **Don't change the user.** Same flags as grep. Same output. Drop the binary, rename it `grep`, done.
+4. **Safe by default.** No index → falls back to real grep. `--text` → always real grep. Zero risk.
+5. **Zero-config analysis.** Sinks auto-tagged by package name. No hardcoded "database" or "http" lists.
 
 ## License
 
