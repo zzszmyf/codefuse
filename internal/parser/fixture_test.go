@@ -3,10 +3,13 @@ package parser
 import (
 	"os"
 	"strings"
+	"encoding/xml"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/yifanmeng/codefuse/pkg/config"
 )
 
 // All tests use pre-generated XML fixtures — no tree-sitter needed.
@@ -132,4 +135,70 @@ func TestParseError_Format(t *testing.T) {
 	err := &ParseError{File: "test.py", Lang: "python", Stderr: "syntax error"}
 	assert.Contains(t, err.Error(), "test.py")
 	assert.Contains(t, err.Error(), "python")
+}
+
+func TestParseImports_Direct(t *testing.T) {
+	content := "from db.dao import UserDao\nimport os\n"
+	imports, modMap := ParseImports(content, "test.py", "python")
+	assert.NotEmpty(t, imports)
+	assert.Contains(t, modMap, "db.dao")
+
+	content2 := "import com.foo.Bar;\n"
+	imports2, modMap2 := ParseImports(content2, "Test.java", "java")
+	assert.NotEmpty(t, imports2)
+	assert.Contains(t, modMap2, "com.foo.Bar")
+}
+
+func TestBuiltinConfig(t *testing.T) {
+	cfg := BuiltinConfig()
+	assert.Contains(t, cfg, "python")
+	assert.Contains(t, cfg, "java")
+}
+
+func TestExtractName_PrefersIdentifier(t *testing.T) {
+	// Java: type_identifier "String" should NOT win over identifier "login".
+	node := tsNode{
+		XMLName: xml.Name{Local: "method_declaration"},
+		Nodes: []tsNode{
+			{XMLName: xml.Name{Local: "type_identifier"}, Chardata: "String"},
+			{XMLName: xml.Name{Local: "identifier"}, Chardata: "login"},
+		},
+	}
+	name := extractName(node, nil)
+	assert.Equal(t, "login", name, "should prefer identifier over type_identifier")
+}
+
+func TestExtractCallee_Dotted(t *testing.T) {
+	node := tsNode{
+		XMLName: xml.Name{Local: "call"},
+		Nodes: []tsNode{{
+			XMLName: xml.Name{Local: "attribute"},
+			Nodes: []tsNode{
+				{XMLName: xml.Name{Local: "identifier"}, Chardata: "obj"},
+				{XMLName: xml.Name{Local: "identifier"}, Chardata: "method"},
+			},
+		}},
+	}
+	callee := extractCallee(node, nil)
+	assert.Equal(t, "obj.method", callee)
+}
+
+func TestExtractCallee_Simple(t *testing.T) {
+	node := tsNode{
+		XMLName: xml.Name{Local: "call"},
+		Nodes:    []tsNode{{XMLName: xml.Name{Local: "identifier"}, Chardata: "foo"}},
+	}
+	callee := extractCallee(node, nil)
+	assert.Equal(t, "foo", callee)
+}
+
+func TestIsExternalCall(t *testing.T) {
+	assert.True(t, isExternalCall("sql.Query"))
+	assert.False(t, isExternalCall("foo"))
+}
+
+func TestIsDeclNode(t *testing.T) {
+	cfg := config.Builtin["python"]
+	assert.True(t, isDeclNode("function_definition", &cfg))
+	assert.False(t, isDeclNode("call", &cfg))
 }
